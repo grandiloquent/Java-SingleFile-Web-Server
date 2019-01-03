@@ -1,5 +1,8 @@
 
 import java.io.Closeable;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -16,12 +19,14 @@ public class SimpleServer {
     static final int MILLIS_PER_MINUTE = MILLIS_PER_SECOND * 60; //     60,000
     static final int MILLIS_PER_HOUR = MILLIS_PER_MINUTE * 60;   //  3,600,000
     static final int MILLIS_PER_DAY = MILLIS_PER_HOUR * 24;      // 86,400,000
-
+    static final int DEFAULT_BUFFER_SIZE = 8 * 1024;
     static final String UTF_8 = "UTF-8";
 
     private final ServerSocket mServerSocket;
     private final String mURL;
     private int mPort;
+    private String mStaticDirectory;
+
     private Thread mThread;
 
     public SimpleServer(int port, String hostName) throws IOException {
@@ -48,7 +53,7 @@ public class SimpleServer {
         int p1 = 0, p2 = 0, p3 = 0;
 
         for (int i = 0; i < buffer.length; i++) {
-            if (p1 == 0 && buffer[i] == ' ') {
+            if (p1 == 0 && buffer[i] == '/') {
 
                 p1 = i + 1;
             } else if (p3 == 0 && buffer[i] == ' ') {
@@ -90,8 +95,11 @@ public class SimpleServer {
                 return;
             }
 
-            parseURL(status[0]);
-//            byte[][] header = sliceHeader(socket, status[1]);
+            String[] u = parseURL(status[0]);
+            if (u[0].length() == 0/* / */) {
+                return;
+            }
+            //            byte[][] header = sliceHeader(socket, status[1]);
 //            d(toString(header[0]));
 
             //d(toString(status[1]));
@@ -142,6 +150,30 @@ public class SimpleServer {
         } finally {
             closeQuietly(socket);
         }
+    }
+
+    private void sendFile(Socket socket, String type, String fileName) {
+
+        File file = new File(mStaticDirectory, fileName);
+        try {
+            FileInputStream is = new FileInputStream(file);
+            byte[] bytes = new byte[DEFAULT_BUFFER_SIZE];
+
+            int len;
+            while ((len = is.read(bytes, 0, DEFAULT_BUFFER_SIZE)) != -1) {
+
+            }
+          
+        } catch (Exception e) {
+            e(e);
+            send(socket, 500);
+        } finally {
+            closeQuietly(socket);
+        }
+    }
+
+    public void setStaticDirectory(String staticDirectory) {
+        mStaticDirectory = staticDirectory;
     }
 
     private byte[][] sliceHeader(Socket socket, byte[] bytes) throws IOException {

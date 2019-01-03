@@ -8,6 +8,7 @@ public class Main {
 
         try {
             SimpleServer simpleServer = new SimpleServer(8090, "localhost");
+            simpleServer.setStaticDirectory("\\static");
             System.out.println(simpleServer.getURL());
         } catch (IOException e) {
             e.printStackTrace();
