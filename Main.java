@@ -8,7 +8,7 @@ public class Main {
 
         try {
             SimpleServer simpleServer = new SimpleServer(8090, "localhost");
-            simpleServer.setStaticDirectory("\\static");
+            simpleServer.setStaticDirectory("C:\\Users\\psycho\\IdeaProjects\\Console\\src\\static");
             System.out.println(simpleServer.getURL());
         } catch (IOException e) {
             e.printStackTrace();

@@ -11,22 +11,30 @@ import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
+import java.util.List;
+import java.util.Locale;
 
 public class SimpleServer {
 
+    static final String DATE_FORMAT_GMT = " EEE, dd MMM yyyy hh:mm:ss 'GMT'";
+    static final int DEFAULT_BUFFER_SIZE = 8 * 1024;
+    static final String HTTP_CACHE_CONTROL = "Cache-Control";
+    static final String HTTP_CONTENT_TYPE = "Content-Type";
+    static final String HTTP_DATE = "Date";
     static final int MILLIS_PER_SECOND = 1000;
     static final int MILLIS_PER_MINUTE = MILLIS_PER_SECOND * 60; //     60,000
     static final int MILLIS_PER_HOUR = MILLIS_PER_MINUTE * 60;   //  3,600,000
     static final int MILLIS_PER_DAY = MILLIS_PER_HOUR * 24;      // 86,400,000
-    static final int DEFAULT_BUFFER_SIZE = 8 * 1024;
     static final String UTF_8 = "UTF-8";
-
+    final String HTTP_CONTENT_LENGTH = "Content-Length";
     private final ServerSocket mServerSocket;
     private final String mURL;
     private int mPort;
     private String mStaticDirectory;
-
     private Thread mThread;
 
     public SimpleServer(int port, String hostName) throws IOException {
@@ -48,14 +56,13 @@ public class SimpleServer {
 
     private String[] parseURL(byte[] buffer) {
 
-        d(toString(buffer));
 
         int p1 = 0, p2 = 0, p3 = 0;
 
         for (int i = 0; i < buffer.length; i++) {
-            if (p1 == 0 && buffer[i] == '/') {
-
-                p1 = i + 1;
+            if (p1 == 0) {
+                if (buffer[i] == '/')
+                    p1 = i + 1;
             } else if (p3 == 0 && buffer[i] == ' ') {
                 p3 = i;
             }
@@ -65,7 +72,7 @@ public class SimpleServer {
         }
         String method = null;
         if (p1 > 0) {
-            method = toString(Arrays.copyOfRange(buffer, 0, p1));
+            method = toString(Arrays.copyOfRange(buffer, 0, p1 - 1)).trim();
         }
         String url = null;
         String parameter = null;
@@ -96,11 +103,23 @@ public class SimpleServer {
             }
 
             String[] u = parseURL(status[0]);
-            if (u[0].length() == 0/* / */) {
+            if (u[1].length() == 0/* / */) {
+                send(socket, 200, new File(mStaticDirectory, "index.html"));
                 return;
+            } else if (u[1].lastIndexOf('.') != -1) {
+                File file = new File(mStaticDirectory, u[1]);
+                if (file.isFile()) {
+                    send(socket, 200, file);
+                } else {
+                    send(socket, 404);
+                }
+            } else if (u[1].equals("upload")) {
+                processUploadFile(socket, status[1]);
+                send(socket, 404);
+            } else {
+                d("URI: " + u[1]);
             }
-            //            byte[][] header = sliceHeader(socket, status[1]);
-//            d(toString(header[0]));
+
 
             //d(toString(status[1]));
 
@@ -112,11 +131,35 @@ public class SimpleServer {
         closeQuietly(socket);
     }
 
-    private void send(Socket socket, int statusCode) {
-        send(socket, statusCode, null, null);
+
+    private List<String> parseHeaders(byte[] buffer) {
+        List<String> headers = new ArrayList<>();
+        int len = buffer.length;
+        int offset = 0;
+        boolean skip = false;
+        for (int i = 0; i < len; i++) {
+            if (!skip && buffer[i] == ':') {
+                headers.add(toString(Arrays.copyOfRange(buffer, offset, i)));
+                offset = i + 1;
+                skip = true;
+            }
+            if (buffer[i] == '\r') {
+                while (buffer[offset] == ' ') {
+                    offset++;
+                }
+                headers.add(toString(Arrays.copyOfRange(buffer, offset, i)));
+                offset = i + 2;
+                skip = false;
+            }
+        }
+        if (offset < len) {
+            headers.add(toString(Arrays.copyOfRange(buffer, offset, len)));
+        }
+        return headers;
     }
 
-    private void send(Socket socket, int statusCode, String[] headers, byte[]... bytes) {
+    private String responseHeader(int statusCode, List<String> headers) {
+
         StringBuilder sb = new StringBuilder();
 
         sb.append("HTTP/1.1 ")
@@ -126,18 +169,84 @@ public class SimpleServer {
                 .append("\r\n");
 
         if (headers != null) {
-            assert (headers.length % 2 == 0);
-
-            for (int i = 0; i < headers.length; i++) {
-
+            int len = headers.size();
+            if (len != 0) {
+                assert (len % 2 == 0);
+                len = len - 1;
+                for (int i = 0; i < len; i++) {
+                    sb.append(headers.get(i)).append(": ").append(headers.get(++i)).append("\r\n");
+                }
             }
         }
 
         sb.append("\r\n");
+        return sb.toString();
+    }
+
+    private void send(Socket socket, int statusCode) {
+        send(socket, statusCode, null, null);
+    }
+
+    private void send(Socket socket, int statusCode, File file) {
+        try {
+            OutputStream os = socket.getOutputStream();
+            List<String> headers = new ArrayList<>();
+
+            String extension = substringAfterLast(file.getName(), '.').toLowerCase();
+            if (extension != null) {
+                switch (extension) {
+                    case ".html":
+                        headers.add(HTTP_CONTENT_TYPE);
+                        headers.add("text/html; charset=utf-8");
+                        headers.add(HTTP_CACHE_CONTROL);
+                        headers.add("no-cache");
+                        break;
+
+                    case ".js":
+                        headers.add(HTTP_CONTENT_TYPE);
+                        headers.add("text/javascript; charset=UTF-8");
+                        headers.add(HTTP_CACHE_CONTROL);
+                        headers.add("public, max-age=31536000, stale-while-revalidate=2592000");
+                        break;
+                    case ".css":
+                        headers.add(HTTP_CONTENT_TYPE);
+                        headers.add("text/css");
+                        headers.add(HTTP_CACHE_CONTROL);
+                        headers.add("public, max-age=31536000, stale-while-revalidate=2592000");
+                        break;
+                }
+            }
+            headers.add(HTTP_DATE);
+            headers.add(new SimpleDateFormat(DATE_FORMAT_GMT, Locale.US).format(file.lastModified()));
+            headers.add(HTTP_CONTENT_LENGTH);
+            headers.add(Long.toString(file.length()));
+
+            byte[] header = responseHeader(statusCode, headers).getBytes(UTF_8);
+            os.write(header, 0, header.length);
+
+            FileInputStream is = new FileInputStream(file);
+
+            byte[] bytes = new byte[DEFAULT_BUFFER_SIZE];
+
+            int len;
+            while ((len = is.read(bytes, 0, DEFAULT_BUFFER_SIZE)) != -1) {
+                os.write(bytes, 0, len);
+            }
+            os.flush();
+        } catch (Exception e) {
+            e(e);
+            send(socket, 500);
+        } finally {
+            closeQuietly(socket);
+        }
+    }
+
+    private void send(Socket socket, int statusCode, List<String> headers, byte[]... bytes) {
+
         try {
             OutputStream os = socket.getOutputStream();
 
-            byte[] header = sb.toString().getBytes(UTF_8);
+            byte[] header = responseHeader(statusCode, headers).getBytes(UTF_8);
             os.write(header, 0, header.length);
             if (bytes != null) {
                 for (int i = 0; i < bytes.length; i++) {
@@ -146,7 +255,7 @@ public class SimpleServer {
             }
             os.flush();
         } catch (Exception e) {
-
+            e(e);
         } finally {
             closeQuietly(socket);
         }
@@ -163,7 +272,7 @@ public class SimpleServer {
             while ((len = is.read(bytes, 0, DEFAULT_BUFFER_SIZE)) != -1) {
 
             }
-          
+
         } catch (Exception e) {
             e(e);
             send(socket, 500);
@@ -205,6 +314,28 @@ public class SimpleServer {
         return null;
     }
 
+    private void processUploadFile(Socket socket, byte[] bytes) throws IOException {
+
+        byte[][] header = sliceHeader(socket, bytes);
+        List<String> headers = parseHeaders(header[0]);
+        String boundary = null;
+        for (int i = 0; i < headers.size(); i += 2) {
+            if (headers.get(i).equalsIgnoreCase(HTTP_CONTENT_TYPE))
+                if (headers.get(i + 1).startsWith("multipart/form-data;")) {
+                    boundary = substringAfter(headers.get(i + 1), "boundary=");
+
+                } else {
+                    send(socket, 404);
+                    return;
+                }
+        }
+        if (boundary == null) {
+            send(socket, 404);
+            return;
+        }
+        d(boundary);
+    }
+
     private byte[][] sliceURL(Socket socket) throws IOException {
 
         InputStream is = socket.getInputStream();
@@ -232,6 +363,7 @@ public class SimpleServer {
         }
         return null;
     }
+
 
     private void startServer() {
         mThread = new Thread(() -> {
@@ -387,6 +519,18 @@ public class SimpleServer {
                 }
             }
         }
+    }
+
+    static String substringAfterLast(String s, char delimiter) {
+        int index = s.lastIndexOf(delimiter);
+        if (index == -1) return null;
+        else return s.substring(index);
+    }
+
+    static String substringAfter(String s, String delimiter) {
+        int index = s.indexOf(delimiter);
+        if (index == -1) return null;
+        else return s.substring(index + delimiter.length());
     }
 
     static String substringBefore(String s, char delimiter) {

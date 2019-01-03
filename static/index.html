@@ -1,12 +1,47 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
+
 <head>
-    <meta charset="UTF-8">
-    <title>Title</title>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta charset="utf-8">
+    <title></title>
+    <meta name="description" content="">
+    <meta name="author" content="">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="dropzone.min.css">
+    <link rel="stylesheet" href="main.min.css">
+
+    <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.2/html5shiv.min.js"></script>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/respond.js/1.4.2/respond.min.js"></script>
+    <![endif]-->
+    <!--<link rel="shortcut icon" href="">-->
+    <script src="dropzone.min.js"></script>
 </head>
+
 <body>
+<div class="line">
+    <div class="media-item">
+        <a class="item-thumbnail-container">
+            <div class="item-thumbnail-container-large center">
+                <div class="cover video-thumbnail-img video-thumbnail-bg"></div>
+                <img alt="" class="cover video-thumbnail-img" src="%s.png">
+            </div>
+        </a>
+        <div class="details">
+            <div class="large-media-item-info cbox">
+                <a class="large-media-item-metadata">
+                    <h3>%s</h3>
+                </a>
+            </div>
+        </div>
+        <a href="?q=%s" style="display:block;position:absolute;width:100%;height:100%"></a>
+    </div>
+</div>
+
 <div id="dropzone">
-    <form></form>
+    <form class="dropzone" action="/upload"></form>
 </div>
 </body>
+
 </html>
