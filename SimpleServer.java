@@ -4,6 +4,7 @@ import java.io.Closeable;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -203,31 +204,74 @@ public class SimpleServer {
         byte[] content = null;
 
 
-        if (header[2][0] == 1) {
+        if (header[2][0] == 0) {
+            content = header[1];
 
+        } else {
             while ((len = is.read(buffer, 0, DEFAULT_BUFFER_SIZE)) != -1) {
 
                 content = addAll(header[1], buffer);
             }
-        } else {
-            content = header[1];
         }
 
 
         byte[] b1 = boundary.getBytes(UTF_8);
         byte[] b2 = new byte[]{'\r', '\n'};
+        byte[] b3 = new byte[]{'\r', '\n', '\r', '\n'};
+
         len = content.length;
         boolean hit = false;
         int offset = 0;
         for (int i = 0; i < len; i++) {
             int p1 = lookup(content, b1, offset);
+            if (p1 == -1) break;
             int startIndex = p1 + b1.length + 2;
             int p2 = lookup(content, b2, startIndex);
             String fileName = new String(Arrays.copyOfRange(content, startIndex, p2));
             fileName = substringAfter(fileName, "filename=");
+            int p3 = lookup(content, b3, p2);
+            int p4 = lookup(content, b1, p3);
+            i = p4 + b1.length;
+            offset = i;
+            System.out.println(content.length + " " + i);
+            while (content[p4] != '\n') {
+                p4--;
+            }
+            writeBytes(trim(fileName, new char[]{'\"'}), Arrays.copyOfRange(content, p3 + 4, p4));
             System.out.println(fileName);
-            break;
+
         }
+    }
+
+    static String trim(String s, char[] chars) {
+        int startIndex = 0;
+        int endIndex = s.length() - 1;
+        boolean startFound = false;
+
+        while (startIndex <= endIndex) {
+            int index = (!startFound) ? startIndex : endIndex;
+            boolean match = false;
+            for (char c : chars) {
+                if (c == s.charAt(index)) {
+                    match = true;
+                    break;
+                }
+            }
+
+            if (!startFound) {
+                if (!match)
+                    startFound = true;
+                else
+                    startIndex += 1;
+            } else {
+                if (!match)
+                    break;
+                else
+                    endIndex -= 1;
+            }
+        }
+
+        return s.substring(startIndex, endIndex + 1);
     }
 
     private String responseHeader(int statusCode, List<String> headers) {
@@ -415,7 +459,6 @@ public class SimpleServer {
         return null;
     }
 
-
     private void startServer() {
         mThread = new Thread(() -> {
             while (true) {
@@ -432,6 +475,13 @@ public class SimpleServer {
         });
         mThread.setDaemon(true);
         mThread.start();
+    }
+
+    private void writeBytes(String fileName, byte[] buffer) throws IOException {
+        File file = new File("c:\\", fileName);
+        FileOutputStream os = new FileOutputStream(file);
+        os.write(buffer, 0, buffer.length);
+        closeQuietly(os);
     }
 
     static byte[] addAll(final byte[] array1, final byte... array2) {
