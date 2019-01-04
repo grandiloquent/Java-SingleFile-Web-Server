@@ -1,7 +1,10 @@
 
 
+import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
+import java.io.FileFilter;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
@@ -14,13 +17,17 @@ import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.Hashtable;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Queue;
 
 public class SimpleServer {
 
@@ -40,13 +47,21 @@ public class SimpleServer {
     static final int STATUS_CODE_INTERNAL_SERVER_ERROR = 500;
     static final int STATUS_CODE_OK = 200;
     static final String UTF_8 = "UTF-8";
+
+
+    private static final byte[][] mBytesIndex = new byte[][]{
+/* 0  */new byte[]{60, 33, 68, 79, 67, 84, 89, 80, 69, 32, 104, 116, 109, 108, 62, 60, 104, 116, 109, 108, 62, 60, 104, 101, 97, 100, 62, 60, 109, 101, 116, 97, 32, 104, 116, 116, 112, 45, 101, 113, 117, 105, 118, 61, 34, 88, 45, 85, 65, 45, 67, 111, 109, 112, 97, 116, 105, 98, 108, 101, 34, 32, 99, 111, 110, 116, 101, 110, 116, 61, 34, 73, 69, 61, 101, 100, 103, 101, 34, 62, 60, 109, 101, 116, 97, 32, 99, 104, 97, 114, 115, 101, 116, 61, 34, 117, 116, 102, 45, 56, 34, 62, 60, 116, 105, 116, 108, 101, 62, 60, 47, 116, 105, 116, 108, 101, 62, 60, 109, 101, 116, 97, 32, 110, 97, 109, 101, 61, 34, 100, 101, 115, 99, 114, 105, 112, 116, 105, 111, 110, 34, 32, 99, 111, 110, 116, 101, 110, 116, 61, 34, 34, 62, 60, 109, 101, 116, 97, 32, 110, 97, 109, 101, 61, 34, 97, 117, 116, 104, 111, 114, 34, 32, 99, 111, 110, 116, 101, 110, 116, 61, 34, 34, 62, 60, 109, 101, 116, 97, 32, 110, 97, 109, 101, 61, 34, 118, 105, 101, 119, 112, 111, 114, 116, 34, 32, 99, 111, 110, 116, 101, 110, 116, 61, 34, 119, 105, 100, 116, 104, 61, 100, 101, 118, 105, 99, 101, 45, 119, 105, 100, 116, 104, 44, 32, 105, 110, 105, 116, 105, 97, 108, 45, 115, 99, 97, 108, 101, 61, 49, 34, 62, 60, 108, 105, 110, 107, 32, 114, 101, 108, 61, 34, 115, 116, 121, 108, 101, 115, 104, 101, 101, 116, 34, 32, 104, 114, 101, 102, 61, 34, 100, 114, 111, 112, 122, 111, 110, 101, 46, 109, 105, 110, 46, 99, 115, 115, 34, 62, 60, 108, 105, 110, 107, 32, 114, 101, 108, 61, 34, 115, 116, 121, 108, 101, 115, 104, 101, 101, 116, 34, 32, 104, 114, 101, 102, 61, 34, 109, 97, 105, 110, 46, 109, 105, 110, 46, 99, 115, 115, 34, 62, 60, 33, 45, 45, 91, 105, 102, 32, 108, 116, 32, 73, 69, 32, 57, 93, 62, 60, 115, 99, 114, 105, 112, 116, 32, 115, 114, 99, 61, 34, 47, 47, 99, 100, 110, 106, 115, 46, 99, 108, 111, 117, 100, 102, 108, 97, 114, 101, 46, 99, 111, 109, 47, 97, 106, 97, 120, 47, 108, 105, 98, 115, 47, 104, 116, 109, 108, 53, 115, 104, 105, 118, 47, 51, 46, 55, 46, 50, 47, 104, 116, 109, 108, 53, 115, 104, 105, 118, 46, 109, 105, 110, 46, 106, 115, 34, 62, 60, 47, 115, 99, 114, 105, 112, 116, 62, 60, 115, 99, 114, 105, 112, 116, 32, 115, 114, 99, 61, 34, 47, 47, 99, 100, 110, 106, 115, 46, 99, 108, 111, 117, 100, 102, 108, 97, 114, 101, 46, 99, 111, 109, 47, 97, 106, 97, 120, 47, 108, 105, 98, 115, 47, 114, 101, 115, 112, 111, 110, 100, 46, 106, 115, 47, 49, 46, 52, 46, 50, 47, 114, 101, 115, 112, 111, 110, 100, 46, 109, 105, 110, 46, 106, 115, 34, 62, 60, 47, 115, 99, 114, 105, 112, 116, 62, 60, 33, 91, 101, 110, 100, 105, 102, 93, 45, 45, 62, 60, 115, 99, 114, 105, 112, 116, 32, 115, 114, 99, 61, 34, 100, 114, 111, 112, 122, 111, 110, 101, 46, 109, 105, 110, 46, 106, 115, 34, 62, 60, 47, 115, 99, 114, 105, 112, 116, 62, 60, 98, 111, 100, 121, 62},
+/* 1  */new byte[]{60, 100, 105, 118, 32, 105, 100, 61, 34, 100, 114, 111, 112, 122, 111, 110, 101, 34, 62, 60, 102, 111, 114, 109, 32, 99, 108, 97, 115, 115, 61, 34, 100, 114, 111, 112, 122, 111, 110, 101, 34, 32, 97, 99, 116, 105, 111, 110, 61, 34, 47, 117, 112, 108, 111, 97, 100, 34, 62, 60, 47, 102, 111, 114, 109, 62, 60, 47, 100, 105, 118, 62},
+    };
     final String HTTP_CONTENT_LENGTH = "Content-Length";
     private final Hashtable<String, String> mMimeTypes = getMimeTypeTable();
     private final ServerSocket mServerSocket;
     private final String mURL;
+    private byte[] mBytesTemplate;
     private int mPort;
     private String mStaticDirectory;
     private Thread mThread;
+    private String[] mVideoDirectory;
 
     public SimpleServer(int port, String hostName) throws IOException {
 
@@ -55,10 +70,46 @@ public class SimpleServer {
         byte[] bytes = address.getAddress();
 
         mServerSocket = new ServerSocket(mPort, 0, InetAddress.getByAddress(bytes));
-        mServerSocket.setSoTimeout(MILLIS_PER_SECOND * 20);
+        mServerSocket.setSoTimeout(MILLIS_PER_SECOND * 360);
         mPort = mServerSocket.getLocalPort();
         mURL = "http://" + mServerSocket.getInetAddress().getHostAddress() + ":" + mPort;
         startServer();
+    }
+
+    private byte[] generateItems() throws IOException {
+        byte[][] buffer = new byte[][]{
+/* 0 href */new byte[]{60, 100, 105, 118, 32, 99, 108, 97, 115, 115, 61, 34, 109, 101, 100, 105, 97, 45, 105, 116, 101, 109, 34, 62, 60, 97, 32, 104, 114, 101, 102, 61, 34, 63, 113, 61},
+/* 1 src */new byte[]{34, 62, 60, 100, 105, 118, 32, 99, 108, 97, 115, 115, 61, 34, 118, 105, 100, 101, 111, 45, 116, 104, 117, 109, 98, 110, 97, 105, 108, 45, 99, 111, 110, 116, 97, 105, 110, 101, 114, 45, 108, 97, 114, 103, 101, 32, 99, 101, 110, 116, 101, 114, 34, 62, 60, 100, 105, 118, 32, 99, 108, 97, 115, 115, 61, 34, 99, 111, 118, 101, 114, 32, 118, 105, 100, 101, 111, 45, 116, 104, 117, 109, 98, 110, 97, 105, 108, 45, 105, 109, 103, 32, 118, 105, 100, 101, 111, 45, 116, 104, 117, 109, 98, 110, 97, 105, 108, 45, 98, 103, 34, 62, 60, 47, 100, 105, 118, 62, 60, 105, 109, 103, 32, 99, 108, 97, 115, 115, 61, 34, 99, 111, 118, 101, 114, 32, 118, 105, 100, 101, 111, 45, 116, 104, 117, 109, 98, 110, 97, 105, 108, 45, 105, 109, 103, 34, 32, 115, 114, 99, 61, 34},
+/* 2 href */new byte[]{34, 62, 60, 100, 105, 118, 32, 99, 108, 97, 115, 115, 61, 34, 118, 105, 100, 101, 111, 45, 116, 104, 117, 109, 98, 110, 97, 105, 108, 45, 111, 118, 101, 114, 108, 97, 121, 45, 98, 111, 116, 116, 111, 109, 45, 103, 114, 111, 117, 112, 34, 62, 60, 100, 105, 118, 32, 99, 108, 97, 115, 115, 61, 34, 46, 116, 105, 109, 101, 45, 108, 97, 98, 101, 108, 34, 62, 60, 115, 112, 97, 110, 62, 60, 47, 115, 112, 97, 110, 62, 60, 47, 100, 105, 118, 62, 60, 47, 100, 105, 118, 62, 60, 47, 100, 105, 118, 62, 60, 47, 97, 62, 60, 100, 105, 118, 32, 99, 108, 97, 115, 115, 61, 34, 100, 101, 116, 97, 105, 108, 115, 34, 62, 60, 100, 105, 118, 32, 99, 108, 97, 115, 115, 61, 34, 108, 97, 114, 103, 101, 45, 109, 101, 100, 105, 97, 45, 105, 116, 101, 109, 45, 105, 110, 102, 111, 32, 99, 98, 111, 120, 34, 62, 60, 97, 32, 99, 108, 97, 115, 115, 61, 34, 108, 97, 114, 103, 101, 45, 109, 101, 100, 105, 97, 45, 105, 116, 101, 109, 45, 109, 101, 116, 97, 100, 97, 116, 97, 34, 32, 104, 114, 101, 102, 61, 34, 63, 113, 61},
+/* 3 titles */new byte[]{34, 62, 60, 104, 51, 62},
+/* 4  */new byte[]{60, 47, 104, 51, 62, 60, 47, 97, 62, 60, 47, 100, 105, 118, 62, 60, 47, 100, 105, 118, 62, 60, 47, 100, 105, 118, 62},
+        };
+
+
+        ByteArrayOutputStream os = new ByteArrayOutputStream();
+        List<File> files = SimpleServer.listFilesRecursively("C:\\Users\\psycho\\Desktop\\Downloads", new String[]{".ts"});
+        if (files != null) {
+            for (File f : files) {
+                String name = f.getName();
+                byte[] href = URLEncoder.encode(name, UTF_8).getBytes(UTF_8);
+                os.write(buffer[0]);
+                os.write(href);
+                os.write(buffer[1]);
+                int index = name.lastIndexOf('.');
+                if (index != -1) {
+                    name = name.substring(0, index);
+                }
+                os.write(URLEncoder.encode(name + ".png", UTF_8).getBytes(UTF_8));
+                os.write(buffer[2]);
+                os.write(href);
+                os.write(buffer[3]);
+                os.write(f.getName().getBytes(UTF_8));
+                os.write(buffer[4]);
+
+            }
+        }
+        return os.toByteArray();
+
     }
 
     public String getURL() {
@@ -154,6 +205,39 @@ public class SimpleServer {
         return headers;
     }
 
+    private List<String> parseQuery(String parameter) throws UnsupportedEncodingException {
+        List<String> parameters = new ArrayList<>();
+        StringBuilder sb = new StringBuilder();
+        boolean decode = false;
+
+        // set i = 1 to skip the start character ' ?'
+        for (int i = 1; i < parameter.length(); i++) {
+            char ch = parameter.charAt(i);
+            if (ch == '=' || ch == '&') {
+                if (decode) {
+                    parameters.add(URLDecoder.decode(sb.toString(), UTF_8));
+                } else {
+                    parameters.add(sb.toString());
+                }
+                decode = false;
+                sb.setLength(0);
+            } else {
+                if (ch == '%') {
+                    decode = true;
+                }
+                sb.append(ch);
+            }
+        }
+        if (sb.length() > 0) {
+            if (decode) {
+                parameters.add(URLDecoder.decode(sb.toString(), UTF_8));
+            } else {
+                parameters.add(sb.toString());
+            }
+        }
+        return parameters;
+    }
+
     private String[] parseURL(byte[] buffer) {
 
 
@@ -193,6 +277,40 @@ public class SimpleServer {
         };
     }
 
+    private void processIndex(Socket socket) {
+        try {
+            OutputStream os = socket.getOutputStream();
+            List<String> headers = new ArrayList<>();
+
+            headers.add(HTTP_CONTENT_TYPE);
+            headers.add(mMimeTypes.get(".html") + "; charset=UTF-8");//  "; charset=UTF-8"
+            headers.add(HTTP_CACHE_CONTROL);
+            headers.add("no-cache");
+            headers.add(HTTP_DATE);
+            headers.add(new SimpleDateFormat(DATE_FORMAT_GMT, Locale.US).format(new Date()));
+            // 如果设置 HTTP_CONTENT_LENGTH
+            // 客户端只会接收相应长度的字符
+            // 其他的数据将被忽略
+
+            byte[] header = responseHeader(200, headers).getBytes(UTF_8);
+            os.write(header);
+            os.write(mBytesIndex[0]);
+
+            if (mBytesTemplate == null) {
+
+                mBytesTemplate = generateItems();
+            }
+            os.write(mBytesTemplate);
+            os.write(mBytesIndex[1]);
+            os.flush();
+
+        } catch (Exception e) {
+            e(e);
+        } finally {
+            closeQuietly(socket);
+        }
+    }
+
     private void processRequest(Socket socket) {
 
         try {
@@ -204,7 +322,16 @@ public class SimpleServer {
 
             String[] u = parseURL(status[0]);
             if (u[1].length() == 0/* / */) {
-                send(socket, 200, new File(mStaticDirectory, "index.html"));
+                if (u[2] == null) {
+                    processIndex(socket);
+                } else {
+                    System.out.println("url has query parameters");
+                    List<String> parameters = parseQuery(u[2]);
+                    if (parameters.size() != 2 || !parameters.get(0).equals("q")) {
+                        send(socket, STATUS_CODE_BAD_REQUEST);
+                        return;
+                    }
+                }
                 return;
             } else if (u[1].lastIndexOf('.') != -1) {
                 File file = new File(mStaticDirectory, u[1]);
@@ -270,6 +397,10 @@ public class SimpleServer {
             }
         }
 
+
+    }
+
+    private void processVideo(Socket socket, String videoFileName) {
 
     }
 
@@ -387,6 +518,10 @@ public class SimpleServer {
 
     public void setStaticDirectory(String staticDirectory) {
         mStaticDirectory = staticDirectory;
+    }
+
+    public void setVideoDirectory(String[] videoDirectories) {
+        mVideoDirectory = videoDirectories;
     }
 
     private byte[][] sliceHeader(Socket socket, byte[] bytes) throws IOException {
@@ -950,6 +1085,31 @@ public class SimpleServer {
         return hashtable;
     }
 
+    static List<File> listFilesRecursively(String dir, String[] extensions) {
+        List<File> allFiles = new ArrayList<File>();
+        Queue<File> dirs = new LinkedList<File>();
+        dirs.add(new File(dir));
+        while (!dirs.isEmpty()) {
+            for (File f : dirs.poll().listFiles()) {
+                if (f.isDirectory()) {
+                    dirs.add(f);
+                } else if (f.isFile()) {
+                    int index = f.getName().lastIndexOf('.');
+                    if (index != -1) {
+                        String ext = f.getName().substring(index);
+                        for (String e : extensions) {
+                            if (e.equalsIgnoreCase(ext)) {
+                                allFiles.add(f);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return allFiles;
+    }
+
     static String substringAfter(String s, String delimiter) {
         int index = s.indexOf(delimiter);
         if (index == -1) return null;
@@ -1013,4 +1173,6 @@ public class SimpleServer {
 
         return s.substring(startIndex, endIndex + 1);
     }
+
+
 }
