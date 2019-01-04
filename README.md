@@ -4,6 +4,7 @@
 
 一个简单的网页服务器，支持播放视频和上传文件，可用于安卓项目。
 
+A simple web server that can stream videos and receive files, also can be used for Android projects.
 
 ```java
         try {
