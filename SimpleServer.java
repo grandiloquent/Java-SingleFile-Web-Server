@@ -8,6 +8,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.OutputStreamWriter;
 import java.io.UnsupportedEncodingException;
 import java.net.InetAddress;
 import java.net.ServerSocket;
@@ -17,11 +18,14 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
+import java.util.Hashtable;
 import java.util.List;
 import java.util.Locale;
 
 public class SimpleServer {
 
+    private static final byte[] BYTES_DOUBLE_LINE_FEED = new byte[]{'\r', '\n', '\r', '\n'};
+    private static final byte[] BYTES_LINE_FEED = new byte[]{'\r', '\n'};
     static final String DATE_FORMAT_GMT = " EEE, dd MMM yyyy hh:mm:ss 'GMT'";
     static final int DEFAULT_BUFFER_SIZE = 8 * 1024;
     static final String HTTP_CACHE_CONTROL = "Cache-Control";
@@ -32,8 +36,12 @@ public class SimpleServer {
     static final int MILLIS_PER_MINUTE = MILLIS_PER_SECOND * 60; //     60,000
     static final int MILLIS_PER_HOUR = MILLIS_PER_MINUTE * 60;   //  3,600,000
     static final int MILLIS_PER_DAY = MILLIS_PER_HOUR * 24;      // 86,400,000
+    static final int STATUS_CODE_BAD_REQUEST = 400;
+    static final int STATUS_CODE_INTERNAL_SERVER_ERROR = 500;
+    static final int STATUS_CODE_OK = 200;
     static final String UTF_8 = "UTF-8";
     final String HTTP_CONTENT_LENGTH = "Content-Length";
+    private final Hashtable<String, String> mMimeTypes = getMimeTypeTable();
     private final ServerSocket mServerSocket;
     private final String mURL;
     private int mPort;
@@ -55,6 +63,51 @@ public class SimpleServer {
 
     public String getURL() {
         return mURL;
+    }
+
+    private void handleSmallFile(Socket socket, String boundary, byte[] content) throws IOException {
+        byte[] boundaryPattern = boundary.getBytes(UTF_8);
+        int offset = 0;
+        String fileName = "";
+
+        while (offset < content.length) {
+            int index = lookup(content, boundaryPattern, offset);
+            if (index == -1) {
+                d("can't not find the boundary.");
+                return;
+            } else {
+                offset = index + boundary.length() + BYTES_LINE_FEED.length;
+            }
+            index = lookup(content, BYTES_LINE_FEED, offset);
+            if (index == -1) {
+                return;
+            } else {
+                // Content-Disposition
+                String contentDisposition = toString(Arrays.copyOfRange(content, offset, index));
+                offset = index + BYTES_LINE_FEED.length;
+                fileName = substringAfterLast(contentDisposition, "filename=");
+                fileName = trim(fileName, new char[]{'"'});
+
+                index = lookup(content, BYTES_DOUBLE_LINE_FEED, offset);
+                // File content start position
+                int start = index + BYTES_DOUBLE_LINE_FEED.length;
+                if (index == -1) {
+                    send(socket, STATUS_CODE_BAD_REQUEST, "Unable to determine the beginning of the file content");
+                    return;
+                }
+                index = lookup(content, boundaryPattern, start);
+                if (index == -1) {
+                    send(socket, STATUS_CODE_BAD_REQUEST, "Unable to determine the ending of the file content");
+                    return;
+
+                }
+                index -= BYTES_LINE_FEED.length;
+
+                writeBytes(fileName, Arrays.copyOfRange(content, start, index));
+                send(socket, STATUS_CODE_OK, fileName);
+                return;
+            }
+        }
     }
 
     private int lookup(byte[] content, byte[] pattern, int startIndex) {
@@ -182,6 +235,7 @@ public class SimpleServer {
         System.out.println("[processUploadFile] => ");
         byte[][] header = sliceHeader(socket, bytes);
         List<String> headers = parseHeaders(header[0]);
+
         String boundary = null;
         for (int i = 0; i < headers.size(); i += 2) {
             if (headers.get(i).equalsIgnoreCase(HTTP_CONTENT_TYPE))
@@ -197,16 +251,18 @@ public class SimpleServer {
         if (boundary == null) {
             send(socket, 404);
             return;
+        } else {
+            // Add two dashes in start according to the convention
+            boundary = "--" + boundary;
         }
         InputStream is = socket.getInputStream();
         byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
-        int len = -1;
+        int len;
         byte[] content = null;
 
 
         if (header[2][0] == 0) {
-            content = header[1];
-
+            handleSmallFile(socket, boundary, header[1]);
         } else {
             while ((len = is.read(buffer, 0, DEFAULT_BUFFER_SIZE)) != -1) {
 
@@ -215,63 +271,6 @@ public class SimpleServer {
         }
 
 
-        byte[] b1 = boundary.getBytes(UTF_8);
-        byte[] b2 = new byte[]{'\r', '\n'};
-        byte[] b3 = new byte[]{'\r', '\n', '\r', '\n'};
-
-        len = content.length;
-        boolean hit = false;
-        int offset = 0;
-        for (int i = 0; i < len; i++) {
-            int p1 = lookup(content, b1, offset);
-            if (p1 == -1) break;
-            int startIndex = p1 + b1.length + 2;
-            int p2 = lookup(content, b2, startIndex);
-            String fileName = new String(Arrays.copyOfRange(content, startIndex, p2));
-            fileName = substringAfter(fileName, "filename=");
-            int p3 = lookup(content, b3, p2);
-            int p4 = lookup(content, b1, p3);
-            i = p4 + b1.length;
-            offset = i;
-            System.out.println(content.length + " " + i);
-            while (content[p4] != '\n') {
-                p4--;
-            }
-            writeBytes(trim(fileName, new char[]{'\"'}), Arrays.copyOfRange(content, p3 + 4, p4));
-            System.out.println(fileName);
-
-        }
-    }
-
-    static String trim(String s, char[] chars) {
-        int startIndex = 0;
-        int endIndex = s.length() - 1;
-        boolean startFound = false;
-
-        while (startIndex <= endIndex) {
-            int index = (!startFound) ? startIndex : endIndex;
-            boolean match = false;
-            for (char c : chars) {
-                if (c == s.charAt(index)) {
-                    match = true;
-                    break;
-                }
-            }
-
-            if (!startFound) {
-                if (!match)
-                    startFound = true;
-                else
-                    startIndex += 1;
-            } else {
-                if (!match)
-                    break;
-                else
-                    endIndex -= 1;
-            }
-        }
-
-        return s.substring(startIndex, endIndex + 1);
     }
 
     private String responseHeader(int statusCode, List<String> headers) {
@@ -303,30 +302,39 @@ public class SimpleServer {
         send(socket, statusCode, null, null);
     }
 
+    private void send(Socket socket, int statusCode, String message) {
+        try {
+            send(socket, statusCode, null, message.getBytes(UTF_8));
+        } catch (UnsupportedEncodingException e) {
+            e(e);
+            send(socket, 500);
+        }
+    }
+
     private void send(Socket socket, int statusCode, File file) {
         try {
             OutputStream os = socket.getOutputStream();
             List<String> headers = new ArrayList<>();
 
             String extension = substringAfterLast(file.getName(), '.').toLowerCase();
+            headers.add(HTTP_CONTENT_TYPE);
+            headers.add(mMimeTypes.get(extension));//  "; charset=UTF-8"
+
             if (extension != null) {
                 switch (extension) {
                     case ".html":
-                        headers.add(HTTP_CONTENT_TYPE);
-                        headers.add("text/html; charset=utf-8");
+
                         headers.add(HTTP_CACHE_CONTROL);
                         headers.add("no-cache");
                         break;
 
                     case ".js":
-                        headers.add(HTTP_CONTENT_TYPE);
-                        headers.add("text/javascript; charset=UTF-8");
+
                         headers.add(HTTP_CACHE_CONTROL);
                         headers.add("public, max-age=31536000, stale-while-revalidate=2592000");
                         break;
                     case ".css":
-                        headers.add(HTTP_CONTENT_TYPE);
-                        headers.add("text/css");
+
                         headers.add(HTTP_CACHE_CONTROL);
                         headers.add("public, max-age=31536000, stale-while-revalidate=2592000");
                         break;
@@ -377,26 +385,6 @@ public class SimpleServer {
         }
     }
 
-    private void sendFile(Socket socket, String type, String fileName) {
-
-        File file = new File(mStaticDirectory, fileName);
-        try {
-            FileInputStream is = new FileInputStream(file);
-            byte[] bytes = new byte[DEFAULT_BUFFER_SIZE];
-
-            int len;
-            while ((len = is.read(bytes, 0, DEFAULT_BUFFER_SIZE)) != -1) {
-
-            }
-
-        } catch (Exception e) {
-            e(e);
-            send(socket, 500);
-        } finally {
-            closeQuietly(socket);
-        }
-    }
-
     public void setStaticDirectory(String staticDirectory) {
         mStaticDirectory = staticDirectory;
     }
@@ -408,25 +396,22 @@ public class SimpleServer {
         byte[] buffer = new byte[bufferSize];
         if ((len = is.read(buffer, 0, bufferSize)) != -1) {
 
-            for (int i = 0; i < len; i++) {
-                if (i + 3 < len && buffer[i] == '\r'
-                        && buffer[i + 1] == '\n'
-                        && buffer[i + 2] == '\r'
-                        && buffer[i + 3] == '\n') {
 
-                    byte[] buf1 = Arrays.copyOfRange(buffer, 0, i);
-                    byte[] buf2 = null;
-                    if (len - i > 4) {
-                        buf2 = Arrays.copyOfRange(buffer, i + 4, len);
-                    }
-                    byte[][] result = new byte[][]{
-                            addAll(bytes, buf1),
-                            buf2,
-                            len < bufferSize ? new byte[]{0} : new byte[]{1}
-                    };
-                    return result;
-                }
+            int index = lookup(buffer, BYTES_DOUBLE_LINE_FEED, 0);
+            if (index == -1) {
+                return null;
             }
+            byte[] buf1 = Arrays.copyOfRange(buffer, 0, index);
+            byte[] buf2 = null;
+            if (len - index > 4) {
+                buf2 = Arrays.copyOfRange(buffer, index + 4, len);
+            }
+            byte[][] result = new byte[][]{
+                    addAll(bytes, buf1),
+                    buf2,
+                    len < bufferSize ? new byte[]{0} : new byte[]{1}
+            };
+            return result;
         }
         return null;
     }
@@ -440,21 +425,22 @@ public class SimpleServer {
         int len;
         if ((len = is.read(buffer, 0, bufferSize)) != -1) {
 
-            for (int i = 0; i < len; i++) {
-                if (i + 1 < len && buffer[i] == '\r' && buffer[i + 1] == '\n') {
-
-                    byte[] buf1 = Arrays.copyOfRange(buffer, 0, i);
-                    byte[] buf2 = null;
-                    if (len - i > 2) {
-                        buf2 = Arrays.copyOfRange(buffer, i + 2, len);
-                    }
-                    byte[][] result = new byte[][]{
-                            buf1,
-                            buf2
-                    };
-                    return result;
-                }
+            int index = lookup(buffer, BYTES_LINE_FEED, 0);
+            if (index == -1) {
+                return null;
             }
+
+
+            byte[] buf1 = Arrays.copyOfRange(buffer, 0, index);
+            byte[] buf2 = null;
+            if (len - index > 2) {
+                buf2 = Arrays.copyOfRange(buffer, index + 2, len);
+            }
+            byte[][] result = new byte[][]{
+                    buf1,
+                    buf2
+            };
+            return result;
         }
         return null;
     }
@@ -510,14 +496,6 @@ public class SimpleServer {
 
     static void e(Exception e) {
         System.out.println("[E]: " + e);
-    }
-
-    static void e(Object... objects) {
-        StringBuilder sb = new StringBuilder();
-        for (Object o : objects) {
-            sb.append(o).append(' ');
-        }
-        System.out.println("[E]: " + sb.toString());
     }
 
     static String getDefaultReason(int statusCode) {
@@ -622,6 +600,356 @@ public class SimpleServer {
         }
     }
 
+    static Hashtable<String, String> getMimeTypeTable() {
+        Hashtable<String, String> hashtable = new Hashtable<>();
+
+        hashtable.put(".323", "text/h323");
+        hashtable.put(".aaf", "application/octet-stream");
+        hashtable.put(".aca", "application/octet-stream");
+        hashtable.put(".accdb", "application/msaccess");
+        hashtable.put(".accde", "application/msaccess");
+        hashtable.put(".accdt", "application/msaccess");
+        hashtable.put(".acx", "application/internet-property-stream");
+        hashtable.put(".afm", "application/octet-stream");
+        hashtable.put(".ai", "application/postscript");
+        hashtable.put(".aif", "audio/x-aiff");
+        hashtable.put(".aifc", "audio/aiff");
+        hashtable.put(".aiff", "audio/aiff");
+        hashtable.put(".application", "application/x-ms-application");
+        hashtable.put(".art", "image/x-jg");
+        hashtable.put(".asd", "application/octet-stream");
+        hashtable.put(".asf", "video/x-ms-asf");
+        hashtable.put(".asi", "application/octet-stream");
+        hashtable.put(".asm", "text/plain");
+        hashtable.put(".asr", "video/x-ms-asf");
+        hashtable.put(".asx", "video/x-ms-asf");
+        hashtable.put(".atom", "application/atom+xml");
+        hashtable.put(".au", "audio/basic");
+        hashtable.put(".avi", "video/x-msvideo");
+        hashtable.put(".axs", "application/olescript");
+        hashtable.put(".bas", "text/plain");
+        hashtable.put(".bcpio", "application/x-bcpio");
+        hashtable.put(".bin", "application/octet-stream");
+        hashtable.put(".bmp", "image/bmp");
+        hashtable.put(".c", "text/plain");
+        hashtable.put(".cab", "application/octet-stream");
+        hashtable.put(".calx", "application/vnd.ms-office.calx");
+        hashtable.put(".cat", "application/vnd.ms-pki.seccat");
+        hashtable.put(".cdf", "application/x-cdf");
+        hashtable.put(".chm", "application/octet-stream");
+        hashtable.put(".class", "application/x-java-applet");
+        hashtable.put(".clp", "application/x-msclip");
+        hashtable.put(".cmx", "image/x-cmx");
+        hashtable.put(".cnf", "text/plain");
+        hashtable.put(".cod", "image/cis-cod");
+        hashtable.put(".cpio", "application/x-cpio");
+        hashtable.put(".cpp", "text/plain");
+        hashtable.put(".crd", "application/x-mscardfile");
+        hashtable.put(".crl", "application/pkix-crl");
+        hashtable.put(".crt", "application/x-x509-ca-cert");
+        hashtable.put(".csh", "application/x-csh");
+        hashtable.put(".css", "text/css");
+        hashtable.put(".csv", "application/octet-stream");
+        hashtable.put(".cur", "application/octet-stream");
+        hashtable.put(".dcr", "application/x-director");
+        hashtable.put(".deploy", "application/octet-stream");
+        hashtable.put(".der", "application/x-x509-ca-cert");
+        hashtable.put(".dib", "image/bmp");
+        hashtable.put(".dir", "application/x-director");
+        hashtable.put(".disco", "text/xml");
+        hashtable.put(".dll", "application/x-msdownload");
+        hashtable.put(".dll.config", "text/xml");
+        hashtable.put(".dlm", "text/dlm");
+        hashtable.put(".doc", "application/msword");
+        hashtable.put(".docm", "application/vnd.ms-word.document.macroEnabled.12");
+        hashtable.put(".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        hashtable.put(".dot", "application/msword");
+        hashtable.put(".dotm", "application/vnd.ms-word.template.macroEnabled.12");
+        hashtable.put(".dotx", "application/vnd.openxmlformats-officedocument.wordprocessingml.template");
+        hashtable.put(".dsp", "application/octet-stream");
+        hashtable.put(".dtd", "text/xml");
+        hashtable.put(".dvi", "application/x-dvi");
+        hashtable.put(".dwf", "drawing/x-dwf");
+        hashtable.put(".dwp", "application/octet-stream");
+        hashtable.put(".dxr", "application/x-director");
+        hashtable.put(".eml", "message/rfc822");
+        hashtable.put(".emz", "application/octet-stream");
+        hashtable.put(".eot", "application/octet-stream");
+        hashtable.put(".eps", "application/postscript");
+        hashtable.put(".etx", "text/x-setext");
+        hashtable.put(".evy", "application/envoy");
+        hashtable.put(".exe", "application/octet-stream");
+        hashtable.put(".exe.config", "text/xml");
+        hashtable.put(".fdf", "application/vnd.fdf");
+        hashtable.put(".fif", "application/fractals");
+        hashtable.put(".fla", "application/octet-stream");
+        hashtable.put(".flr", "x-world/x-vrml");
+        hashtable.put(".flv", "video/x-flv");
+        hashtable.put(".gif", "image/gif");
+        hashtable.put(".gtar", "application/x-gtar");
+        hashtable.put(".gz", "application/x-gzip");
+        hashtable.put(".h", "text/plain");
+        hashtable.put(".hdf", "application/x-hdf");
+        hashtable.put(".hdml", "text/x-hdml");
+        hashtable.put(".hhc", "application/x-oleobject");
+        hashtable.put(".hhk", "application/octet-stream");
+        hashtable.put(".hhp", "application/octet-stream");
+        hashtable.put(".hlp", "application/winhlp");
+        hashtable.put(".hqx", "application/mac-binhex40");
+        hashtable.put(".hta", "application/hta");
+        hashtable.put(".htc", "text/x-component");
+        hashtable.put(".htm", "text/html");
+        hashtable.put(".html", "text/html");
+        hashtable.put(".htt", "text/webviewhtml");
+        hashtable.put(".hxt", "text/html");
+        hashtable.put(".ico", "image/x-icon");
+        hashtable.put(".ics", "application/octet-stream");
+        hashtable.put(".ief", "image/ief");
+        hashtable.put(".iii", "application/x-iphone");
+        hashtable.put(".inf", "application/octet-stream");
+        hashtable.put(".ins", "application/x-internet-signup");
+        hashtable.put(".isp", "application/x-internet-signup");
+        hashtable.put(".IVF", "video/x-ivf");
+        hashtable.put(".jar", "application/java-archive");
+        hashtable.put(".java", "application/octet-stream");
+        hashtable.put(".jck", "application/liquidmotion");
+        hashtable.put(".jcz", "application/liquidmotion");
+        hashtable.put(".jfif", "image/pjpeg");
+        hashtable.put(".jpb", "application/octet-stream");
+        hashtable.put(".jpe", "image/jpeg");
+        hashtable.put(".jpeg", "image/jpeg");
+        hashtable.put(".jpg", "image/jpeg");
+        hashtable.put(".js", "application/x-javascript");
+        hashtable.put(".jsx", "text/jscript");
+        hashtable.put(".latex", "application/x-latex");
+        hashtable.put(".lit", "application/x-ms-reader");
+        hashtable.put(".lpk", "application/octet-stream");
+        hashtable.put(".lsf", "video/x-la-asf");
+        hashtable.put(".lsx", "video/x-la-asf");
+        hashtable.put(".lzh", "application/octet-stream");
+        hashtable.put(".m13", "application/x-msmediaview");
+        hashtable.put(".m14", "application/x-msmediaview");
+        hashtable.put(".m1v", "video/mpeg");
+        hashtable.put(".m3u", "audio/x-mpegurl");
+        hashtable.put(".man", "application/x-troff-man");
+        hashtable.put(".manifest", "application/x-ms-manifest");
+        hashtable.put(".map", "text/plain");
+        hashtable.put(".mdb", "application/x-msaccess");
+        hashtable.put(".mdp", "application/octet-stream");
+        hashtable.put(".me", "application/x-troff-me");
+        hashtable.put(".mht", "message/rfc822");
+        hashtable.put(".mhtml", "message/rfc822");
+        hashtable.put(".mid", "audio/mid");
+        hashtable.put(".midi", "audio/mid");
+        hashtable.put(".mix", "application/octet-stream");
+        hashtable.put(".mmf", "application/x-smaf");
+        hashtable.put(".mno", "text/xml");
+        hashtable.put(".mny", "application/x-msmoney");
+        hashtable.put(".mov", "video/quicktime");
+        hashtable.put(".movie", "video/x-sgi-movie");
+        hashtable.put(".mp2", "video/mpeg");
+        hashtable.put(".mp3", "audio/mpeg");
+        hashtable.put(".mpa", "video/mpeg");
+        hashtable.put(".mpe", "video/mpeg");
+        hashtable.put(".mpeg", "video/mpeg");
+        hashtable.put(".mpg", "video/mpeg");
+        hashtable.put(".mpp", "application/vnd.ms-project");
+        hashtable.put(".mpv2", "video/mpeg");
+        hashtable.put(".ms", "application/x-troff-ms");
+        hashtable.put(".msi", "application/octet-stream");
+        hashtable.put(".mso", "application/octet-stream");
+        hashtable.put(".mvb", "application/x-msmediaview");
+        hashtable.put(".mvc", "application/x-miva-compiled");
+        hashtable.put(".nc", "application/x-netcdf");
+        hashtable.put(".nsc", "video/x-ms-asf");
+        hashtable.put(".nws", "message/rfc822");
+        hashtable.put(".ocx", "application/octet-stream");
+        hashtable.put(".oda", "application/oda");
+        hashtable.put(".odc", "text/x-ms-odc");
+        hashtable.put(".ods", "application/oleobject");
+        hashtable.put(".one", "application/onenote");
+        hashtable.put(".onea", "application/onenote");
+        hashtable.put(".onetoc", "application/onenote");
+        hashtable.put(".onetoc2", "application/onenote");
+        hashtable.put(".onetmp", "application/onenote");
+        hashtable.put(".onepkg", "application/onenote");
+        hashtable.put(".osdx", "application/opensearchdescription+xml");
+        hashtable.put(".p10", "application/pkcs10");
+        hashtable.put(".p12", "application/x-pkcs12");
+        hashtable.put(".p7b", "application/x-pkcs7-certificates");
+        hashtable.put(".p7c", "application/pkcs7-mime");
+        hashtable.put(".p7m", "application/pkcs7-mime");
+        hashtable.put(".p7r", "application/x-pkcs7-certreqresp");
+        hashtable.put(".p7s", "application/pkcs7-signature");
+        hashtable.put(".pbm", "image/x-portable-bitmap");
+        hashtable.put(".pcx", "application/octet-stream");
+        hashtable.put(".pcz", "application/octet-stream");
+        hashtable.put(".pdf", "application/pdf");
+        hashtable.put(".pfb", "application/octet-stream");
+        hashtable.put(".pfm", "application/octet-stream");
+        hashtable.put(".pfx", "application/x-pkcs12");
+        hashtable.put(".pgm", "image/x-portable-graymap");
+        hashtable.put(".pko", "application/vnd.ms-pki.pko");
+        hashtable.put(".pma", "application/x-perfmon");
+        hashtable.put(".pmc", "application/x-perfmon");
+        hashtable.put(".pml", "application/x-perfmon");
+        hashtable.put(".pmr", "application/x-perfmon");
+        hashtable.put(".pmw", "application/x-perfmon");
+        hashtable.put(".png", "image/png");
+        hashtable.put(".pnm", "image/x-portable-anymap");
+        hashtable.put(".pnz", "image/png");
+        hashtable.put(".pot", "application/vnd.ms-powerpoint");
+        hashtable.put(".potm", "application/vnd.ms-powerpoint.template.macroEnabled.12");
+        hashtable.put(".potx", "application/vnd.openxmlformats-officedocument.presentationml.template");
+        hashtable.put(".ppam", "application/vnd.ms-powerpoint.addin.macroEnabled.12");
+        hashtable.put(".ppm", "image/x-portable-pixmap");
+        hashtable.put(".pps", "application/vnd.ms-powerpoint");
+        hashtable.put(".ppsm", "application/vnd.ms-powerpoint.slideshow.macroEnabled.12");
+        hashtable.put(".ppsx", "application/vnd.openxmlformats-officedocument.presentationml.slideshow");
+        hashtable.put(".ppt", "application/vnd.ms-powerpoint");
+        hashtable.put(".pptm", "application/vnd.ms-powerpoint.presentation.macroEnabled.12");
+        hashtable.put(".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+        hashtable.put(".prf", "application/pics-rules");
+        hashtable.put(".prm", "application/octet-stream");
+        hashtable.put(".prx", "application/octet-stream");
+        hashtable.put(".ps", "application/postscript");
+        hashtable.put(".psd", "application/octet-stream");
+        hashtable.put(".psm", "application/octet-stream");
+        hashtable.put(".psp", "application/octet-stream");
+        hashtable.put(".pub", "application/x-mspublisher");
+        hashtable.put(".qt", "video/quicktime");
+        hashtable.put(".qtl", "application/x-quicktimeplayer");
+        hashtable.put(".qxd", "application/octet-stream");
+        hashtable.put(".ra", "audio/x-pn-realaudio");
+        hashtable.put(".ram", "audio/x-pn-realaudio");
+        hashtable.put(".rar", "application/octet-stream");
+        hashtable.put(".ras", "image/x-cmu-raster");
+        hashtable.put(".rf", "image/vnd.rn-realflash");
+        hashtable.put(".rgb", "image/x-rgb");
+        hashtable.put(".rm", "application/vnd.rn-realmedia");
+        hashtable.put(".rmi", "audio/mid");
+        hashtable.put(".roff", "application/x-troff");
+        hashtable.put(".rpm", "audio/x-pn-realaudio-plugin");
+        hashtable.put(".rtf", "application/rtf");
+        hashtable.put(".rtx", "text/richtext");
+        hashtable.put(".scd", "application/x-msschedule");
+        hashtable.put(".sct", "text/scriptlet");
+        hashtable.put(".sea", "application/octet-stream");
+        hashtable.put(".setpay", "application/set-payment-initiation");
+        hashtable.put(".setreg", "application/set-registration-initiation");
+        hashtable.put(".sgml", "text/sgml");
+        hashtable.put(".sh", "application/x-sh");
+        hashtable.put(".shar", "application/x-shar");
+        hashtable.put(".sit", "application/x-stuffit");
+        hashtable.put(".sldm", "application/vnd.ms-powerpoint.slide.macroEnabled.12");
+        hashtable.put(".sldx", "application/vnd.openxmlformats-officedocument.presentationml.slide");
+        hashtable.put(".smd", "audio/x-smd");
+        hashtable.put(".smi", "application/octet-stream");
+        hashtable.put(".smx", "audio/x-smd");
+        hashtable.put(".smz", "audio/x-smd");
+        hashtable.put(".snd", "audio/basic");
+        hashtable.put(".snp", "application/octet-stream");
+        hashtable.put(".spc", "application/x-pkcs7-certificates");
+        hashtable.put(".spl", "application/futuresplash");
+        hashtable.put(".src", "application/x-wais-source");
+        hashtable.put(".ssm", "application/streamingmedia");
+        hashtable.put(".sst", "application/vnd.ms-pki.certstore");
+        hashtable.put(".stl", "application/vnd.ms-pki.stl");
+        hashtable.put(".sv4cpio", "application/x-sv4cpio");
+        hashtable.put(".sv4crc", "application/x-sv4crc");
+        hashtable.put(".swf", "application/x-shockwave-flash");
+        hashtable.put(".t", "application/x-troff");
+        hashtable.put(".tar", "application/x-tar");
+        hashtable.put(".tcl", "application/x-tcl");
+        hashtable.put(".tex", "application/x-tex");
+        hashtable.put(".texi", "application/x-texinfo");
+        hashtable.put(".texinfo", "application/x-texinfo");
+        hashtable.put(".tgz", "application/x-compressed");
+        hashtable.put(".thmx", "application/vnd.ms-officetheme");
+        hashtable.put(".thn", "application/octet-stream");
+        hashtable.put(".tif", "image/tiff");
+        hashtable.put(".tiff", "image/tiff");
+        hashtable.put(".toc", "application/octet-stream");
+        hashtable.put(".tr", "application/x-troff");
+        hashtable.put(".trm", "application/x-msterminal");
+        hashtable.put(".tsv", "text/tab-separated-values");
+        hashtable.put(".ttf", "application/octet-stream");
+        hashtable.put(".txt", "text/plain");
+        hashtable.put(".u32", "application/octet-stream");
+        hashtable.put(".uls", "text/iuls");
+        hashtable.put(".ustar", "application/x-ustar");
+        hashtable.put(".vbs", "text/vbscript");
+        hashtable.put(".vcf", "text/x-vcard");
+        hashtable.put(".vcs", "text/plain");
+        hashtable.put(".vdx", "application/vnd.ms-visio.viewer");
+        hashtable.put(".vml", "text/xml");
+        hashtable.put(".vsd", "application/vnd.visio");
+        hashtable.put(".vss", "application/vnd.visio");
+        hashtable.put(".vst", "application/vnd.visio");
+        hashtable.put(".vsto", "application/x-ms-vsto");
+        hashtable.put(".vsw", "application/vnd.visio");
+        hashtable.put(".vsx", "application/vnd.visio");
+        hashtable.put(".vtx", "application/vnd.visio");
+        hashtable.put(".wav", "audio/wav");
+        hashtable.put(".wax", "audio/x-ms-wax");
+        hashtable.put(".wbmp", "image/vnd.wap.wbmp");
+        hashtable.put(".wcm", "application/vnd.ms-works");
+        hashtable.put(".wdb", "application/vnd.ms-works");
+        hashtable.put(".wks", "application/vnd.ms-works");
+        hashtable.put(".wm", "video/x-ms-wm");
+        hashtable.put(".wma", "audio/x-ms-wma");
+        hashtable.put(".wmd", "application/x-ms-wmd");
+        hashtable.put(".wmf", "application/x-msmetafile");
+        hashtable.put(".wml", "text/vnd.wap.wml");
+        hashtable.put(".wmlc", "application/vnd.wap.wmlc");
+        hashtable.put(".wmls", "text/vnd.wap.wmlscript");
+        hashtable.put(".wmlsc", "application/vnd.wap.wmlscriptc");
+        hashtable.put(".wmp", "video/x-ms-wmp");
+        hashtable.put(".wmv", "video/x-ms-wmv");
+        hashtable.put(".wmx", "video/x-ms-wmx");
+        hashtable.put(".wmz", "application/x-ms-wmz");
+        hashtable.put(".wps", "application/vnd.ms-works");
+        hashtable.put(".wri", "application/x-mswrite");
+        hashtable.put(".wrl", "x-world/x-vrml");
+        hashtable.put(".wrz", "x-world/x-vrml");
+        hashtable.put(".wsdl", "text/xml");
+        hashtable.put(".wvx", "video/x-ms-wvx");
+        hashtable.put(".x", "application/directx");
+        hashtable.put(".xaf", "x-world/x-vrml");
+        hashtable.put(".xaml", "application/xaml+xml");
+        hashtable.put(".xap", "application/x-silverlight-app");
+        hashtable.put(".xbap", "application/x-ms-xbap");
+        hashtable.put(".xbm", "image/x-xbitmap");
+        hashtable.put(".xdr", "text/plain");
+        hashtable.put(".xla", "application/vnd.ms-excel");
+        hashtable.put(".xlam", "application/vnd.ms-excel.addin.macroEnabled.12");
+        hashtable.put(".xlc", "application/vnd.ms-excel");
+        hashtable.put(".xlm", "application/vnd.ms-excel");
+        hashtable.put(".xls", "application/vnd.ms-excel");
+        hashtable.put(".xlsb", "application/vnd.ms-excel.sheet.binary.macroEnabled.12");
+        hashtable.put(".xlsm", "application/vnd.ms-excel.sheet.macroEnabled.12");
+        hashtable.put(".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        hashtable.put(".xlt", "application/vnd.ms-excel");
+        hashtable.put(".xltm", "application/vnd.ms-excel.template.macroEnabled.12");
+        hashtable.put(".xltx", "application/vnd.openxmlformats-officedocument.spreadsheetml.template");
+        hashtable.put(".xlw", "application/vnd.ms-excel");
+        hashtable.put(".xml", "text/xml");
+        hashtable.put(".xof", "x-world/x-vrml");
+        hashtable.put(".xpm", "image/x-xpixmap");
+        hashtable.put(".xps", "application/vnd.ms-xpsdocument");
+        hashtable.put(".xsd", "text/xml");
+        hashtable.put(".xsf", "text/xml");
+        hashtable.put(".xsl", "text/xml");
+        hashtable.put(".xslt", "text/xml");
+        hashtable.put(".xsn", "application/octet-stream");
+        hashtable.put(".xtp", "application/octet-stream");
+        hashtable.put(".xwd", "image/x-xwindowdump");
+        hashtable.put(".z", "application/x-compress");
+        hashtable.put(".zip", "application/x-zip-compressed");
+
+        return hashtable;
+    }
+
     static String substringAfter(String s, String delimiter) {
         int index = s.indexOf(delimiter);
         if (index == -1) return null;
@@ -632,6 +960,12 @@ public class SimpleServer {
         int index = s.lastIndexOf(delimiter);
         if (index == -1) return null;
         else return s.substring(index);
+    }
+
+    static String substringAfterLast(String s, String delimiter) {
+        int index = s.lastIndexOf(delimiter);
+        if (index == -1) return null;
+        else return s.substring(index + delimiter.length());
     }
 
     static String substringBefore(String s, char delimiter) {
@@ -647,5 +981,36 @@ public class SimpleServer {
             e.printStackTrace();
         }
         return null;
+    }
+
+    static String trim(String s, char[] chars) {
+        int startIndex = 0;
+        int endIndex = s.length() - 1;
+        boolean startFound = false;
+
+        while (startIndex <= endIndex) {
+            int index = (!startFound) ? startIndex : endIndex;
+            boolean match = false;
+            for (char c : chars) {
+                if (c == s.charAt(index)) {
+                    match = true;
+                    break;
+                }
+            }
+
+            if (!startFound) {
+                if (!match)
+                    startFound = true;
+                else
+                    startIndex += 1;
+            } else {
+                if (!match)
+                    break;
+                else
+                    endIndex -= 1;
+            }
+        }
+
+        return s.substring(startIndex, endIndex + 1);
     }
 }
