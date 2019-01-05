@@ -15,7 +15,9 @@ import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
+import java.security.KeyPair;
 import java.text.SimpleDateFormat;
+import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -23,7 +25,11 @@ import java.util.Hashtable;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Queue;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class SimpleServer {
 
@@ -46,6 +52,7 @@ public class SimpleServer {
     static final int STATUS_CODE_OK = 200;
     static final int STATUS_CODE_PARTIAL_CONTENT = 206;
     static final String UTF_8 = "UTF-8";
+    private static final byte[] mBytesDropZone = new byte[]{60, 100, 105, 118, 32, 105, 100, 61, 34, 100, 114, 111, 112, 122, 111, 110, 101, 34, 62, 60, 102, 111, 114, 109, 32, 99, 108, 97, 115, 115, 61, 34, 100, 114, 111, 112, 122, 111, 110, 101, 34, 32, 97, 99, 116, 105, 111, 110, 61, 34, 47, 117, 112, 108, 111, 97, 100, 34, 62, 60, 47, 102, 111, 114, 109, 62, 60, 47, 100, 105, 118, 62};
     private static final byte[][] mBytesIndex = new byte[][]{
 /* 0  */new byte[]{60, 33, 68, 79, 67, 84, 89, 80, 69, 32, 104, 116, 109, 108, 62, 60, 104, 116, 109, 108, 62, 60, 104, 101, 97, 100, 62, 60, 109, 101, 116, 97, 32, 104, 116, 116, 112, 45, 101, 113, 117, 105, 118, 61, 34, 88, 45, 85, 65, 45, 67, 111, 109, 112, 97, 116, 105, 98, 108, 101, 34, 32, 99, 111, 110, 116, 101, 110, 116, 61, 34, 73, 69, 61, 101, 100, 103, 101, 34, 47, 62, 60, 109, 101, 116, 97, 32, 99, 104, 97, 114, 115, 101, 116, 61, 34, 117, 116, 102, 45, 56, 34, 47, 62, 60, 116, 105, 116, 108, 101, 62, 60, 47, 116, 105, 116, 108, 101, 62, 60, 109, 101, 116, 97, 32, 110, 97, 109, 101, 61, 34, 100, 101, 115, 99, 114, 105, 112, 116, 105, 111, 110, 34, 32, 99, 111, 110, 116, 101, 110, 116, 61, 34, 34, 47, 62, 60, 109, 101, 116, 97, 32, 110, 97, 109, 101, 61, 34, 97, 117, 116, 104, 111, 114, 34, 32, 99, 111, 110, 116, 101, 110, 116, 61, 34, 34, 47, 62, 60, 109, 101, 116, 97, 32, 110, 97, 109, 101, 61, 34, 118, 105, 101, 119, 112, 111, 114, 116, 34, 32, 99, 111, 110, 116, 101, 110, 116, 61, 34, 119, 105, 100, 116, 104, 61, 100, 101, 118, 105, 99, 101, 45, 119, 105, 100, 116, 104, 44, 32, 105, 110, 105, 116, 105, 97, 108, 45, 115, 99, 97, 108, 101, 61, 49, 34, 47, 62, 60, 108, 105, 110, 107, 32, 114, 101, 108, 61, 34, 115, 116, 121, 108, 101, 115, 104, 101, 101, 116, 34, 32, 104, 114, 101, 102, 61, 34, 100, 114, 111, 112, 122, 111, 110, 101, 46, 109, 105, 110, 46, 99, 115, 115, 34, 47, 62, 60, 108, 105, 110, 107, 32, 114, 101, 108, 61, 34, 115, 116, 121, 108, 101, 115, 104, 101, 101, 116, 34, 32, 104, 114, 101, 102, 61, 34, 109, 97, 105, 110, 46, 109, 105, 110, 46, 99, 115, 115, 34, 47, 62, 60, 33, 45, 45, 91, 105, 102, 32, 108, 116, 32, 73, 69, 32, 57, 93, 62, 60, 115, 99, 114, 105, 112, 116, 32, 115, 114, 99, 61, 34, 47, 47, 99, 100, 110, 106, 115, 46, 99, 108, 111, 117, 100, 102, 108, 97, 114, 101, 46, 99, 111, 109, 47, 97, 106, 97, 120, 47, 108, 105, 98, 115, 47, 104, 116, 109, 108, 53, 115, 104, 105, 118, 47, 51, 46, 55, 46, 50, 47, 104, 116, 109, 108, 53, 115, 104, 105, 118, 46, 109, 105, 110, 46, 106, 115, 34, 62, 60, 47, 115, 99, 114, 105, 112, 116, 62, 60, 115, 99, 114, 105, 112, 116, 32, 115, 114, 99, 61, 34, 47, 47, 99, 100, 110, 106, 115, 46, 99, 108, 111, 117, 100, 102, 108, 97, 114, 101, 46, 99, 111, 109, 47, 97, 106, 97, 120, 47, 108, 105, 98, 115, 47, 114, 101, 115, 112, 111, 110, 100, 46, 106, 115, 47, 49, 46, 52, 46, 50, 47, 114, 101, 115, 112, 111, 110, 100, 46, 109, 105, 110, 46, 106, 115, 34, 62, 60, 47, 115, 99, 114, 105, 112, 116, 62, 60, 33, 91, 101, 110, 100, 105, 102, 93, 45, 45, 62, 60, 115, 99, 114, 105, 112, 116, 32, 115, 114, 99, 61, 34, 100, 114, 111, 112, 122, 111, 110, 101, 46, 109, 105, 110, 46, 106, 115, 34, 62, 60, 47, 115, 99, 114, 105, 112, 116, 62, 60, 98, 111, 100, 121, 62, 60, 100, 105, 118, 32, 99, 108, 97, 115, 115, 61, 34, 99, 111, 110, 116, 97, 105, 110, 101, 114, 34, 62},
 /* 1  */new byte[]{60, 47, 100, 105, 118, 62},
@@ -54,15 +61,13 @@ public class SimpleServer {
             /* 0 src */new byte[]{60, 100, 105, 118, 32, 105, 100, 61, 34, 112, 108, 97, 121, 101, 114, 34, 32, 99, 108, 97, 115, 115, 61, 34, 112, 108, 97, 121, 101, 114, 45, 97, 112, 105, 32, 112, 108, 97, 121, 101, 114, 45, 115, 105, 122, 101, 34, 62, 60, 100, 105, 118, 32, 99, 108, 97, 115, 115, 61, 34, 104, 116, 109, 108, 53, 45, 118, 105, 100, 101, 111, 45, 99, 111, 110, 116, 97, 105, 110, 101, 114, 34, 62, 60, 118, 105, 100, 101, 111, 32, 99, 108, 97, 115, 115, 61, 34, 104, 116, 109, 108, 53, 45, 118, 105, 100, 101, 111, 45, 112, 108, 97, 121, 101, 114, 34, 32, 99, 111, 110, 116, 114, 111, 108, 115, 32, 97, 117, 116, 111, 112, 108, 97, 121, 62, 60, 115, 111, 117, 114, 99, 101, 32, 115, 114, 99, 61, 34},
             /* 1  */new byte[]{34, 32, 116, 121, 112, 101, 61, 34, 118, 105, 100, 101, 111, 47, 109, 112, 52, 34, 47, 62, 60, 47, 118, 105, 100, 101, 111, 62, 60, 47, 100, 105, 118, 62, 60, 47, 100, 105, 118, 62},
     };
-
-
     static final String[] mVideoExtensions = new String[]{
             ".mp4", ".webm"};
     final String HTTP_CONTENT_LENGTH = "Content-Length";
+    private final ExecutorService mExecutorService;
     private final Hashtable<String, String> mMimeTypes = getMimeTypeTable();
     private final ServerSocket mServerSocket;
     private final String mURL;
-    private byte[] mBytesDropZone = new byte[]{60, 100, 105, 118, 32, 105, 100, 61, 34, 100, 114, 111, 112, 122, 111, 110, 101, 34, 62, 60, 102, 111, 114, 109, 32, 99, 108, 97, 115, 115, 61, 34, 100, 114, 111, 112, 122, 111, 110, 101, 34, 32, 97, 99, 116, 105, 111, 110, 61, 34, 47, 117, 112, 108, 111, 97, 100, 34, 62, 60, 47, 102, 111, 114, 109, 62, 60, 47, 100, 105, 118, 62};
     private byte[] mBytesTemplate;
     private int mPort;
     private String mStaticDirectory;
@@ -80,6 +85,9 @@ public class SimpleServer {
         mServerSocket.setSoTimeout(MILLIS_PER_SECOND * 360);
         mPort = mServerSocket.getLocalPort();
         mURL = "http://" + mServerSocket.getInetAddress().getHostAddress() + ":" + mPort;
+
+        mExecutorService = Executors.newFixedThreadPool(4);
+
         startServer();
     }
 
@@ -135,10 +143,92 @@ public class SimpleServer {
         return mURL;
     }
 
+    private void handleLargeFile(Socket socket, String boundary, byte[] remaining) throws IOException {
+        System.out.println("[handleLargeFile]");
+        byte[] boundaryPattern = boundary.getBytes(UTF_8);
+        InputStream is = socket.getInputStream();
+        int len;
+        byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
+        byte[] content = null;
+        int offset = 0;
+        OutputStream os = null;
+
+        byte[] remainingBytes = null;
+        boolean hit = false;
+        while ((len = is.read(buffer, 0, DEFAULT_BUFFER_SIZE)) != -1) {
+            if (!hit) {
+                if (content == null) {
+                    content = addAll(remaining, buffer);
+                }
+
+                Map.Entry<Integer, String> map = parseFileName(content, boundaryPattern, offset);
+                if (map == null) {
+                    send(socket, STATUS_CODE_BAD_REQUEST);
+                    return;
+                } else {
+
+                    offset = map.getKey();
+                    int end = lookupStopPosition(content, offset);
+                    if (end == -1) {
+
+                        os = writePartBytes(map.getValue(), content, offset, content.length - offset);
+                    } else {
+                        System.out.println("offset = " + offset + " end = " + end);
+                        os = writePartBytes(map.getValue(), content, offset, end - offset);
+
+                        offset = lookup(content, boundaryPattern, end);
+                        if (offset != -1) {
+                            System.out.println("found boundary");
+                            closeQuietly(os);
+                            send(socket, STATUS_CODE_OK);
+                            return;
+                        }
+                        remainingBytes = Arrays.copyOfRange(content, end, content.length);
+                    }
+
+                    hit = true;
+                }
+            } else {
+
+                if (remainingBytes == null) {
+                    content = buffer;
+                } else {
+                    content = addAll(remainingBytes, buffer);
+                }
+
+                int end = lookup(content, boundaryPattern, 0);
+                if (end != -1) {
+                    os.write(content, 0, end - BYTES_LINE_FEED.length);
+                    break;
+                }
+                end = lookupStopPosition(content, 1);
+                if (end == -1) {
+                    os.write(content, 0, len);
+                } else {
+                    os.write(content, 0, end);
+                    remainingBytes = Arrays.copyOfRange(content, end, len);
+                }
+            }
+
+
+        }
+        closeQuietly(os);
+        send(socket, STATUS_CODE_OK);
+    }
+
+    private int lookupStopPosition(byte[] content, int offset) {
+        for (int i = offset; i < content.length; i++) {
+            if (content[i] == '\r') {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private void handleSmallFile(Socket socket, String boundary, byte[] content) throws IOException {
         byte[] boundaryPattern = boundary.getBytes(UTF_8);
         int offset = 0;
-        String fileName = "";
+        String fileName;
 
         while (offset < content.length) {
             int index = lookup(content, boundaryPattern, offset);
@@ -173,7 +263,7 @@ public class SimpleServer {
                 }
                 index -= BYTES_LINE_FEED.length;
 
-                writeBytes(fileName, Arrays.copyOfRange(content, start, index));
+                writeBytes(fileName, content, start, index);
                 send(socket, STATUS_CODE_OK, fileName);
                 return;
             }
@@ -196,6 +286,33 @@ public class SimpleServer {
             if (found) return i;
         }
         return -1;
+    }
+
+
+    private Map.Entry<Integer, String> parseFileName(byte[] content, byte[] boundaryPattern, int offset) {
+        int index = lookup(content, boundaryPattern, offset);
+        if (index == -1) {
+            return null;
+        } else {
+            offset = index + boundaryPattern.length + BYTES_LINE_FEED.length;
+        }
+
+        index = lookup(content, BYTES_LINE_FEED, offset);
+        if (index == -1) {
+            return null;
+        } else {
+            // Content-Disposition
+            String contentDisposition = toString(Arrays.copyOfRange(content, offset, index));
+            offset = index + BYTES_LINE_FEED.length;
+            String fileName = substringAfterLast(contentDisposition, "filename=");
+            fileName = trim(fileName, new char[]{'"'});
+
+            index = lookup(content, BYTES_DOUBLE_LINE_FEED, offset);
+            // File content start position
+            int start = index + BYTES_DOUBLE_LINE_FEED.length;
+
+            return new AbstractMap.SimpleEntry<>(start, fileName);
+        }
     }
 
     private List<String> parseHeaders(byte[] buffer) {
@@ -387,7 +504,7 @@ public class SimpleServer {
     }
 
     private void processUploadFile(Socket socket, byte[] bytes) throws IOException {
-        System.out.println("[processUploadFile] => ");
+
         byte[][] header = sliceHeader(socket, bytes);
         List<String> headers = parseHeaders(header[0]);
 
@@ -410,19 +527,12 @@ public class SimpleServer {
             // Add two dashes in start according to the convention
             boundary = "--" + boundary;
         }
-        InputStream is = socket.getInputStream();
-        byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
-        int len;
-        byte[] content = null;
 
 
         if (header[2][0] == 0) {
             handleSmallFile(socket, boundary, header[1]);
         } else {
-            while ((len = is.read(buffer, 0, DEFAULT_BUFFER_SIZE)) != -1) {
-
-                content = addAll(header[1], buffer);
-            }
+            handleLargeFile(socket, boundary, header[1]);
         }
 
 
@@ -686,10 +796,16 @@ public class SimpleServer {
     private void startServer() {
         mThread = new Thread(() -> {
             while (true) {
-                try {
 
+                try {
                     Socket socket = mServerSocket.accept();
-                    processRequest(socket);
+
+                    mExecutorService.submit(new Runnable() {
+                        @Override
+                        public void run() {
+                            processRequest(socket);
+                        }
+                    });
 
                 } catch (SocketTimeoutException ignore) {
                 } catch (IOException e) {
@@ -701,10 +817,10 @@ public class SimpleServer {
         mThread.start();
     }
 
-    private void writeBytes(String fileName, byte[] buffer) throws IOException {
+    private void writeBytes(String fileName, byte[] buffer, int start, int length) throws IOException {
         File file = new File("c:\\", fileName);
         FileOutputStream os = new FileOutputStream(file);
-        os.write(buffer, 0, buffer.length);
+        os.write(buffer, start, length);
         closeQuietly(os);
     }
 
@@ -724,6 +840,13 @@ public class SimpleServer {
         while ((len = is.read(buffer, 0, DEFAULT_BUFFER_SIZE)) != -1) {
             os.write(buffer, 0, len);
         }
+    }
+
+    private OutputStream writePartBytes(String fileName, byte[] buffer, int start, int length) throws IOException {
+        File file = new File("c:\\", fileName);
+        FileOutputStream os = new FileOutputStream(file);
+        os.write(buffer, start, length);
+        return os;
     }
 
     static byte[] addAll(final byte[] array1, final byte... array2) {
