@@ -15,7 +15,6 @@ import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
-import java.security.KeyPair;
 import java.text.SimpleDateFormat;
 import java.util.AbstractMap;
 import java.util.ArrayList;
@@ -27,9 +26,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Queue;
-import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.logging.Logger;
 
 public class SimpleServer {
 
@@ -159,8 +158,8 @@ public class SimpleServer {
             if (!hit) {
                 if (content == null) {
                     content = addAll(remaining, buffer);
+                    remaining = null;
                 }
-
                 Map.Entry<Integer, String> map = parseFileName(content, boundaryPattern, offset);
                 if (map == null) {
                     send(socket, STATUS_CODE_BAD_REQUEST);
@@ -168,9 +167,8 @@ public class SimpleServer {
                 } else {
 
                     offset = map.getKey();
-                    int end = lookupStopPosition(content, offset);
+                    int end = lookupStopPosition(content, offset, boundaryPattern);
                     if (end == -1) {
-
                         os = writePartBytes(map.getValue(), content, offset, content.length - offset);
                     } else {
                         System.out.println("offset = " + offset + " end = " + end);
@@ -194,19 +192,22 @@ public class SimpleServer {
                     content = buffer;
                 } else {
                     content = addAll(remainingBytes, buffer);
+                    remainingBytes = null;
                 }
 
                 int end = lookup(content, boundaryPattern, 0);
                 if (end != -1) {
+                    System.out.println("[handleLargeFile] => end != -1");
                     os.write(content, 0, end - BYTES_LINE_FEED.length);
                     break;
                 }
-                end = lookupStopPosition(content, 1);
+                end = lookupStopPosition(content, 0, boundaryPattern);
                 if (end == -1) {
-                    os.write(content, 0, len);
+                    os.write(content, 0, content.length);
                 } else {
+                    System.out.println("[handleLargeFile] => end = " + end);
                     os.write(content, 0, end);
-                    remainingBytes = Arrays.copyOfRange(content, end, len);
+                    remainingBytes = Arrays.copyOfRange(content, end, content.length);
                 }
             }
 
@@ -214,15 +215,6 @@ public class SimpleServer {
         }
         closeQuietly(os);
         send(socket, STATUS_CODE_OK);
-    }
-
-    private int lookupStopPosition(byte[] content, int offset) {
-        for (int i = offset; i < content.length; i++) {
-            if (content[i] == '\r') {
-                return i;
-            }
-        }
-        return -1;
     }
 
     private void handleSmallFile(Socket socket, String boundary, byte[] content) throws IOException {
@@ -288,6 +280,20 @@ public class SimpleServer {
         return -1;
     }
 
+    private int lookupStopPosition(byte[] content, int offset, byte[] boundrayPattern) {
+        int len = content.length;
+
+        for (int i = offset; i < len; i++) {
+            if (content[i] == '\r') {
+                if (len - i < boundrayPattern.length || rangeEquals(content, i, boundrayPattern)) {
+                    return i;
+                }
+
+            }
+        }
+
+        return -1;
+    }
 
     private Map.Entry<Integer, String> parseFileName(byte[] content, byte[] boundaryPattern, int offset) {
         int index = lookup(content, boundaryPattern, offset);
@@ -487,7 +493,7 @@ public class SimpleServer {
 
             } else if (u[1].equals("upload")) {
                 processUploadFile(socket, status[1]);
-                send(socket, 404);
+
             } else {
                 d("URI: " + u[1]);
             }
@@ -504,7 +510,7 @@ public class SimpleServer {
     }
 
     private void processUploadFile(Socket socket, byte[] bytes) throws IOException {
-
+        System.out.println("[processUploadFile] => ");
         byte[][] header = sliceHeader(socket, bytes);
         List<String> headers = parseHeaders(header[0]);
 
@@ -513,23 +519,23 @@ public class SimpleServer {
             if (headers.get(i).equalsIgnoreCase(HTTP_CONTENT_TYPE))
                 if (headers.get(i + 1).startsWith("multipart/form-data;")) {
                     boundary = substringAfter(headers.get(i + 1), "boundary=");
-                    System.out.println(boundary);
-
                 } else {
-                    send(socket, 404);
+
+                    send(socket, STATUS_CODE_BAD_REQUEST);
                     return;
                 }
         }
         if (boundary == null) {
-            send(socket, 404);
+            send(socket, STATUS_CODE_BAD_REQUEST);
             return;
         } else {
             // Add two dashes in start according to the convention
             boundary = "--" + boundary;
         }
 
-
+        System.out.println("header length = " + header.length);
         if (header[2][0] == 0) {
+            System.out.println("[processUploadFile] => handle small file.");
             handleSmallFile(socket, boundary, header[1]);
         } else {
             handleLargeFile(socket, boundary, header[1]);
@@ -736,7 +742,6 @@ public class SimpleServer {
         mVideoFiles = files;
     }
 
-
     private byte[][] sliceHeader(Socket socket, byte[] bytes) throws IOException {
         InputStream is = socket.getInputStream();
         int bufferSize = 1024 * 8;
@@ -744,7 +749,8 @@ public class SimpleServer {
         byte[] buffer = new byte[bufferSize];
         if ((len = is.read(buffer, 0, bufferSize)) != -1) {
 
-
+            if (bytes != null && bytes.length > 0)
+                buffer = addAll(bytes, buffer);
             int index = lookup(buffer, BYTES_DOUBLE_LINE_FEED, 0);
             if (index == -1) {
                 return null;
@@ -752,10 +758,12 @@ public class SimpleServer {
             byte[] buf1 = Arrays.copyOfRange(buffer, 0, index);
             byte[] buf2 = null;
             if (len - index > 4) {
-                buf2 = Arrays.copyOfRange(buffer, index + 4, len);
+                buf2 = Arrays.copyOfRange(buffer, index + 4, buffer.length);
             }
+
+            System.out.println("[sliceHeader] => " + len + " " + bufferSize);
             byte[][] result = new byte[][]{
-                    addAll(bytes, buf1),
+                    buf1,
                     buf2,
                     len < bufferSize ? new byte[]{0} : new byte[]{1}
             };
@@ -1390,6 +1398,16 @@ public class SimpleServer {
             }
         }
         return files;
+    }
+
+    static boolean rangeEquals(byte[] b1, int start, byte[] b2) {
+
+        for (int i = start; i < start + b2.length; i++) {
+            if (b1[start] != b2[2]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     static String substringAfter(String s, String delimiter) {
