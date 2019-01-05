@@ -1,5 +1,7 @@
 
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
@@ -142,19 +144,19 @@ public class SimpleServer {
         return mURL;
     }
 
-    private void handleLargeFile(Socket socket, String boundary, byte[] remaining) throws IOException {
+    private void handleLargeFile(Socket socket, InputStream is, String boundary, byte[] remaining) throws IOException {
         System.out.println("[handleLargeFile]");
         byte[] boundaryPattern = boundary.getBytes(UTF_8);
-        InputStream is = socket.getInputStream();
         int len;
         byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
-        byte[] content = null;
+
         int offset = 0;
         OutputStream os = null;
 
         byte[] remainingBytes = null;
         boolean hit = false;
         while ((len = is.read(buffer, 0, DEFAULT_BUFFER_SIZE)) != -1) {
+            byte[] content = null;
             if (!hit) {
                 if (content == null) {
                     content = addAll(remaining, buffer);
@@ -170,9 +172,10 @@ public class SimpleServer {
                     int end = lookupStopPosition(content, offset, boundaryPattern);
                     if (end == -1) {
                         os = writePartBytes(map.getValue(), content, offset, content.length - offset);
+
                     } else {
-                        System.out.println("offset = " + offset + " end = " + end);
                         os = writePartBytes(map.getValue(), content, offset, end - offset);
+
 
                         offset = lookup(content, boundaryPattern, end);
                         if (offset != -1) {
@@ -192,29 +195,40 @@ public class SimpleServer {
                     content = buffer;
                 } else {
                     content = addAll(remainingBytes, buffer);
+                    System.out.println("[handleLargeFile] => " + "add remaining");
+                    buffer = new byte[DEFAULT_BUFFER_SIZE];
                     remainingBytes = null;
+
                 }
 
                 int end = lookup(content, boundaryPattern, 0);
                 if (end != -1) {
-                    System.out.println("[handleLargeFile] => end != -1");
+                    System.out.println("[handleLargeFile] => found boundary");
                     os.write(content, 0, end - BYTES_LINE_FEED.length);
-                    break;
+
+
+                    closeQuietly(os);
+                    send(socket, STATUS_CODE_OK);
+                    return;
                 }
                 end = lookupStopPosition(content, 0, boundaryPattern);
                 if (end == -1) {
+                    System.out.println("[handleLargeFile] => cant find stop position");
                     os.write(content, 0, content.length);
+
+
                 } else {
-                    System.out.println("[handleLargeFile] => end = " + end);
                     os.write(content, 0, end);
+
                     remainingBytes = Arrays.copyOfRange(content, end, content.length);
+
+
                 }
             }
 
 
         }
-        closeQuietly(os);
-        send(socket, STATUS_CODE_OK);
+
     }
 
     private void handleSmallFile(Socket socket, String boundary, byte[] content) throws IOException {
@@ -458,7 +472,8 @@ public class SimpleServer {
     private void processRequest(Socket socket) {
 
         try {
-            byte[][] status = sliceURL(socket);
+            InputStream is = new BufferedInputStream(socket.getInputStream());
+            byte[][] status = sliceURL(socket, is);
             if (status == null || status.length < 1) {
                 send(socket, 404);
                 return;
@@ -481,7 +496,7 @@ public class SimpleServer {
             } else if (u[1].lastIndexOf('.') != -1) {
                 if (isVideoFileName(u[1])) {
                     System.out.println("request for video");
-                    processVideoFile(socket, URLDecoder.decode(u[1], UTF_8), status[1]);
+                    processVideoFile(socket, is, URLDecoder.decode(u[1], UTF_8), status[1]);
                 } else {
                     File file = new File(mStaticDirectory, u[1]);
                     if (file.isFile()) {
@@ -492,7 +507,7 @@ public class SimpleServer {
                 }
 
             } else if (u[1].equals("upload")) {
-                processUploadFile(socket, status[1]);
+                processUploadFile(socket, is, status[1]);
 
             } else {
                 d("URI: " + u[1]);
@@ -509,9 +524,9 @@ public class SimpleServer {
         closeQuietly(socket);
     }
 
-    private void processUploadFile(Socket socket, byte[] bytes) throws IOException {
+    private void processUploadFile(Socket socket, InputStream is, byte[] bytes) throws IOException {
         System.out.println("[processUploadFile] => ");
-        byte[][] header = sliceHeader(socket, bytes);
+        byte[][] header = sliceHeader(socket, is, bytes);
         List<String> headers = parseHeaders(header[0]);
 
         String boundary = null;
@@ -538,13 +553,13 @@ public class SimpleServer {
             System.out.println("[processUploadFile] => handle small file.");
             handleSmallFile(socket, boundary, header[1]);
         } else {
-            handleLargeFile(socket, boundary, header[1]);
+            handleLargeFile(socket, is, boundary, header[1]);
         }
 
 
     }
 
-    private void processVideoFile(Socket socket, String videoFileName, byte[] remainingBytes) {
+    private void processVideoFile(Socket socket, InputStream is, String videoFileName, byte[] remainingBytes) {
         File videoFile = null;
         for (File file : mVideoFiles) {
             if (file.getName().endsWith(videoFileName)) {
@@ -559,7 +574,7 @@ public class SimpleServer {
 
 
         try {
-            byte[][] header = sliceHeader(socket, remainingBytes);
+            byte[][] header = sliceHeader(socket, is, remainingBytes);
             List<String> headers = parseHeaders(header[0]);
             long skip = 0L;
             for (int i = 0; i < headers.size(); i++) {
@@ -578,7 +593,7 @@ public class SimpleServer {
                 }
             }
 
-            InputStream is = new FileInputStream(videoFile);
+            InputStream fileInputStream = new FileInputStream(videoFile);
             List<String> responseHeaders = generateGenericHeader(
                     getMimeTypeTable().get(getExtension(videoFileName)),
                     "public, max-age=31536000");
@@ -591,7 +606,7 @@ public class SimpleServer {
             else
                 writeHeaders(socket, STATUS_CODE_OK, headers);
 
-            writeInputStream(socket, is, skip);
+            writeInputStream(socket, fileInputStream, skip);
             socket.getOutputStream().flush();
         } catch (Exception e) {
             e("[processVideoFile]: " + e);
@@ -742,8 +757,7 @@ public class SimpleServer {
         mVideoFiles = files;
     }
 
-    private byte[][] sliceHeader(Socket socket, byte[] bytes) throws IOException {
-        InputStream is = socket.getInputStream();
+    private byte[][] sliceHeader(Socket socket, InputStream is, byte[] bytes) throws IOException {
         int bufferSize = 1024 * 8;
         int len;
         byte[] buffer = new byte[bufferSize];
@@ -751,6 +765,7 @@ public class SimpleServer {
 
             if (bytes != null && bytes.length > 0)
                 buffer = addAll(bytes, buffer);
+
             int index = lookup(buffer, BYTES_DOUBLE_LINE_FEED, 0);
             if (index == -1) {
                 return null;
@@ -772,9 +787,8 @@ public class SimpleServer {
         return null;
     }
 
-    private byte[][] sliceURL(Socket socket) throws IOException {
+    private byte[][] sliceURL(Socket socket, InputStream is) throws IOException {
 
-        InputStream is = socket.getInputStream();
 
         int bufferSize = 256;
         byte[] buffer = new byte[bufferSize];
@@ -785,7 +799,7 @@ public class SimpleServer {
             if (index == -1) {
                 return null;
             }
-
+            String x = toString(buffer);
 
             byte[] buf1 = Arrays.copyOfRange(buffer, 0, index);
             byte[] buf2 = null;
@@ -852,7 +866,7 @@ public class SimpleServer {
 
     private OutputStream writePartBytes(String fileName, byte[] buffer, int start, int length) throws IOException {
         File file = new File("c:\\", fileName);
-        FileOutputStream os = new FileOutputStream(file);
+        OutputStream os = new BufferedOutputStream(new FileOutputStream(file));
         os.write(buffer, start, length);
         return os;
     }
