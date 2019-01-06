@@ -30,7 +30,6 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.logging.Logger;
 
 public class SimpleServer {
 
@@ -68,18 +67,22 @@ public class SimpleServer {
     private final ExecutorService mExecutorService;
     private final Hashtable<String, String> mMimeTypes = getMimeTypeTable();
     private final ServerSocket mServerSocket;
+    private final String mStaticDirectory;
     private final String mURL;
+    private final String mUploadDirectory;
+    private final String[] mVideoDirectory;
     private byte[] mBytesTemplate;
     private int mPort;
-    private String mStaticDirectory;
     private Thread mThread;
-    private String[] mVideoDirectory;
     private List<File> mVideoFiles;
 
-    public SimpleServer(int port, String hostName) throws IOException {
+    private SimpleServer(Builder builder) throws IOException {
 
-        mPort = port;
-        InetAddress address = InetAddress.getByName(hostName);
+        mPort = builder.mPort;
+        mStaticDirectory = builder.mStaticDirectory;
+        mVideoDirectory = builder.mVideoDirectory;
+        mUploadDirectory = builder.mUploadDirectory;
+        InetAddress address = InetAddress.getByName(builder.mHost);
         byte[] bytes = address.getAddress();
 
         mServerSocket = new ServerSocket(mPort, 0, InetAddress.getByAddress(bytes));
@@ -89,8 +92,36 @@ public class SimpleServer {
 
         mExecutorService = Executors.newFixedThreadPool(4);
 
+        setupVideoFiles();
         startServer();
     }
+
+    private boolean atBoundaryLine(byte[] data, int lineStart, int lineLength, byte[] boundary) {
+        int len = boundary.length;
+        if (lineLength != len && lineLength != len + 2) {
+            return false;
+        }
+        for (int i = 0; i < len; i++) {
+            if (data[lineStart + i] != boundary[i])
+                return false;
+        }
+        if (lineLength == len)
+            return true;
+        if (data[lineStart + len] != 45 || data[lineStart + len + 1] != 45)
+            return false;
+
+        return true;
+
+    }
+
+    private boolean atLastLine(byte[] data, int lineStart, byte[] boundary) {
+        int len = boundary.length;
+        if (data[lineStart + len] != 45 || data[lineStart + len + 1] != 45)
+            return false;
+
+        return true;
+    }
+
 
     private List<String> generateGenericHeader(String mimeType, String cache) {
         List<String> headers = new ArrayList<>();
@@ -138,6 +169,24 @@ public class SimpleServer {
         }
         return os.toByteArray();
 
+    }
+
+    private FormHeader getFormHeader(byte[] data, int offset) {
+        int index = lookup(data, BYTES_LINE_FEED, offset);
+        if (index == -1) return null;
+        FormHeader formHeader = new FormHeader();
+        String contentDisposition = toString(Arrays.copyOfRange(data, offset, index));
+        contentDisposition = substringAfter(contentDisposition, "filename=");
+        contentDisposition = trim(contentDisposition, new char[]{'"'});
+        formHeader.fileName = contentDisposition;
+        index = index + BYTES_LINE_FEED.length;
+
+        index = lookup(data, BYTES_DOUBLE_LINE_FEED, index);
+        if (index == -1) return null;
+
+        formHeader.start = index + BYTES_DOUBLE_LINE_FEED.length;
+
+        return formHeader;
     }
 
     public String getURL() {
@@ -307,6 +356,48 @@ public class SimpleServer {
         }
 
         return -1;
+    }
+
+    private Position nextLine(byte[] data, byte[] boundary, int offset) {
+        int length = data.length;
+        int position = -1;
+        int len = boundary.length;
+
+
+        for (int i = offset; i < length; i++) {
+            if (data[i] == 10) {
+                position = i + 1;
+
+                Position p = new Position();
+                p.position = position;
+
+                int lineLength = i - offset - 1;
+
+                if (lineLength == len || lineLength == len + 2) {
+                    for (int j = 0; j < len; j++) {
+                        if (data[offset + j] != boundary[j]) {
+
+                            p.isBoundaryLine = false;
+                            p.isLastLine = false;
+                            return p;
+                        }
+                    }
+
+                    if (lineLength == len + 2 && data[offset + lineLength - 1] == 45 && data[offset + lineLength - 2] == 45) {
+                        p.isBoundaryLine = true;
+                        p.isLastLine = true;
+                        return p;
+                    } else {
+                        p.isBoundaryLine = true;
+                        p.isLastLine = false;
+                        return p;
+                    }
+                }
+
+                return p;
+            }
+        }
+        return null;
     }
 
     private Map.Entry<Integer, String> parseFileName(byte[] content, byte[] boundaryPattern, int offset) {
@@ -531,7 +622,8 @@ public class SimpleServer {
 
         String boundary = null;
         for (int i = 0; i < headers.size(); i += 2) {
-            if (headers.get(i).equalsIgnoreCase(HTTP_CONTENT_TYPE))
+            String key = headers.get(i);
+            if (key.equalsIgnoreCase(HTTP_CONTENT_TYPE)) {
                 if (headers.get(i + 1).startsWith("multipart/form-data;")) {
                     boundary = substringAfter(headers.get(i + 1), "boundary=");
                 } else {
@@ -539,6 +631,9 @@ public class SimpleServer {
                     send(socket, STATUS_CODE_BAD_REQUEST);
                     return;
                 }
+            } else if (key.equalsIgnoreCase(HTTP_CONTENT_LENGTH)) {
+                d(headers.get(i + 1));
+            }
         }
         if (boundary == null) {
             send(socket, STATUS_CODE_BAD_REQUEST);
@@ -548,15 +643,72 @@ public class SimpleServer {
             boundary = "--" + boundary;
         }
 
-        System.out.println("header length = " + header.length);
-        if (header[2][0] == 0) {
-            System.out.println("[processUploadFile] => handle small file.");
-            handleSmallFile(socket, boundary, header[1]);
-        } else {
-            handleLargeFile(socket, is, boundary, header[1]);
+
+        // handleLargeFile(socket, is, boundary, header[1]);
+
+        byte[] boundaryBytes = boundary.getBytes(UTF_8);
+        byte[] data = header[1];
+        int offset = 0;
+        OutputStream os = null;
+        boolean exit = false;
+        while (true) {
+
+            if (exit) {
+                closeQuietly(os);
+                send(socket, STATUS_CODE_OK);
+                return;
+            }
+            Position position = nextLine(data, boundaryBytes, offset);
+            if (position == null) {
+                FormData formData = readData(is, data, offset);
+                data = formData.buffer;
+                offset = 0;
+
+            } else if (position.isBoundaryLine) {
+
+                if (position.isLastLine) {
+
+
+                    exit = true;
+                } else {
+
+                    FormHeader formHeader = getFormHeader(data, position.position);
+                    if (formHeader == null) {
+                        send(socket, STATUS_CODE_BAD_REQUEST);
+                        return;
+                    }
+                    d(formHeader.fileName + " " + formHeader.start);
+                    offset = formHeader.start;
+
+                    os = new FileOutputStream(new File(mUploadDirectory, formHeader.fileName));
+
+
+                }
+
+            } else {
+                if (data.length - position.position > boundaryBytes.length && byteArrayHasPrefix(boundaryBytes, data, position.position)) {
+                    os.write(data, offset, position.position - offset - 2);
+
+                } else
+                    os.write(data, offset, position.position - offset);
+                offset = position.position;
+            }
         }
 
 
+//        closeQuietly(os);
+//        send(socket, STATUS_CODE_OK);
+    }
+
+    private boolean byteArrayHasPrefix(byte[] prefix, byte[] byteArray, int offset) {
+        d(prefix.length + " " + byteArray.length + " " + offset);
+        if (prefix == null || byteArray == null || prefix.length > byteArray.length)
+            return false;
+        for (int i = 0; i < prefix.length; i++) {
+            if (prefix[i] != byteArray[i + offset])
+                return false;
+        }
+        return true;
     }
 
     private void processVideoFile(Socket socket, InputStream is, String videoFileName, byte[] remainingBytes) {
@@ -639,6 +791,20 @@ public class SimpleServer {
         } finally {
             closeQuietly(socket);
         }
+    }
+
+    private FormData readData(InputStream is, byte[] data, int offset) throws IOException {
+        byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
+        int stop = data.length - offset;
+        for (int i = 0; i < stop; i++) {
+            buffer[i] = data[offset + i];
+        }
+        int len = is.read(buffer, stop, DEFAULT_BUFFER_SIZE - stop);
+
+        FormData formData = new FormData();
+        formData.buffer = buffer;
+        formData.hasNext = len != -1;
+        return formData;
     }
 
     private String responseHeader(int statusCode, List<String> headers) {
@@ -746,12 +912,7 @@ public class SimpleServer {
         }
     }
 
-    public void setStaticDirectory(String staticDirectory) {
-        mStaticDirectory = staticDirectory;
-    }
-
-    public void setVideoDirectory(String[] videoDirectories) {
-        mVideoDirectory = videoDirectories;
+    private void setupVideoFiles() {
         List<File> files = listFilesRecursivelyInDirectories(mVideoDirectory,
                 mVideoExtensions);
         mVideoFiles = files;
@@ -865,7 +1026,7 @@ public class SimpleServer {
     }
 
     private OutputStream writePartBytes(String fileName, byte[] buffer, int start, int length) throws IOException {
-        File file = new File("c:\\", fileName);
+        File file = new File(mUploadDirectory, fileName);
         OutputStream os = new BufferedOutputStream(new FileOutputStream(file));
         os.write(buffer, start, length);
         return os;
@@ -1488,5 +1649,56 @@ public class SimpleServer {
         return s.substring(startIndex, endIndex + 1);
     }
 
+    public static class Builder {
+        private final String mHost;
+        private final int mPort;
+        private String mStaticDirectory;
+        private String mUploadDirectory;
+        private String[] mVideoDirectory;
 
+        public Builder(String host, int port) {
+
+            mHost = host;
+            mPort = port;
+        }
+
+        public SimpleServer build() {
+            try {
+                return new SimpleServer(this);
+            } catch (IOException e) {
+                return null;
+            }
+        }
+
+        public Builder setStaticDirectory(String staticDirectory) {
+            mStaticDirectory = staticDirectory;
+            return this;
+        }
+
+        public Builder setUploadDirectory(String uploadDirectory) {
+            mUploadDirectory = uploadDirectory;
+            return this;
+        }
+
+        public Builder setVideoDirectory(String[] videoDirectory) {
+            mVideoDirectory = videoDirectory;
+            return this;
+        }
+    }
+
+    private static class FormHeader {
+        public String fileName;
+        public int start;
+    }
+
+    private static class Position {
+        public boolean isBoundaryLine;
+        public boolean isLastLine;
+        public int position;
+    }
+
+    private static class FormData {
+        public byte[] buffer;
+        public boolean hasNext;
+    }
 }
