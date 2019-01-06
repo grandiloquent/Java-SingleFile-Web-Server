@@ -96,32 +96,17 @@ public class SimpleServer {
         startServer();
     }
 
-    private boolean atBoundaryLine(byte[] data, int lineStart, int lineLength, byte[] boundary) {
-        int len = boundary.length;
-        if (lineLength != len && lineLength != len + 2) {
+
+    private boolean byteArrayHasPrefix(byte[] prefix, byte[] byteArray, int offset) {
+        d(prefix.length + " " + byteArray.length + " " + offset);
+        if (prefix == null || byteArray == null || prefix.length > byteArray.length)
             return false;
-        }
-        for (int i = 0; i < len; i++) {
-            if (data[lineStart + i] != boundary[i])
+        for (int i = 0; i < prefix.length; i++) {
+            if (prefix[i] != byteArray[i + offset])
                 return false;
         }
-        if (lineLength == len)
-            return true;
-        if (data[lineStart + len] != 45 || data[lineStart + len + 1] != 45)
-            return false;
-
-        return true;
-
-    }
-
-    private boolean atLastLine(byte[] data, int lineStart, byte[] boundary) {
-        int len = boundary.length;
-        if (data[lineStart + len] != 45 || data[lineStart + len + 1] != 45)
-            return false;
-
         return true;
     }
-
 
     private List<String> generateGenericHeader(String mimeType, String cache) {
         List<String> headers = new ArrayList<>();
@@ -193,138 +178,6 @@ public class SimpleServer {
         return mURL;
     }
 
-    private void handleLargeFile(Socket socket, InputStream is, String boundary, byte[] remaining) throws IOException {
-        System.out.println("[handleLargeFile]");
-        byte[] boundaryPattern = boundary.getBytes(UTF_8);
-        int len;
-        byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
-
-        int offset = 0;
-        OutputStream os = null;
-
-        byte[] remainingBytes = null;
-        boolean hit = false;
-        while ((len = is.read(buffer, 0, DEFAULT_BUFFER_SIZE)) != -1) {
-            byte[] content = null;
-            if (!hit) {
-                if (content == null) {
-                    content = addAll(remaining, buffer);
-                    remaining = null;
-                }
-                Map.Entry<Integer, String> map = parseFileName(content, boundaryPattern, offset);
-                if (map == null) {
-                    send(socket, STATUS_CODE_BAD_REQUEST);
-                    return;
-                } else {
-
-                    offset = map.getKey();
-                    int end = lookupStopPosition(content, offset, boundaryPattern);
-                    if (end == -1) {
-                        os = writePartBytes(map.getValue(), content, offset, content.length - offset);
-
-                    } else {
-                        os = writePartBytes(map.getValue(), content, offset, end - offset);
-
-
-                        offset = lookup(content, boundaryPattern, end);
-                        if (offset != -1) {
-                            System.out.println("found boundary");
-                            closeQuietly(os);
-                            send(socket, STATUS_CODE_OK);
-                            return;
-                        }
-                        remainingBytes = Arrays.copyOfRange(content, end, content.length);
-                    }
-
-                    hit = true;
-                }
-            } else {
-
-                if (remainingBytes == null) {
-                    content = buffer;
-                } else {
-                    content = addAll(remainingBytes, buffer);
-                    System.out.println("[handleLargeFile] => " + "add remaining");
-                    buffer = new byte[DEFAULT_BUFFER_SIZE];
-                    remainingBytes = null;
-
-                }
-
-                int end = lookup(content, boundaryPattern, 0);
-                if (end != -1) {
-                    System.out.println("[handleLargeFile] => found boundary");
-                    os.write(content, 0, end - BYTES_LINE_FEED.length);
-
-
-                    closeQuietly(os);
-                    send(socket, STATUS_CODE_OK);
-                    return;
-                }
-                end = lookupStopPosition(content, 0, boundaryPattern);
-                if (end == -1) {
-                    System.out.println("[handleLargeFile] => cant find stop position");
-                    os.write(content, 0, content.length);
-
-
-                } else {
-                    os.write(content, 0, end);
-
-                    remainingBytes = Arrays.copyOfRange(content, end, content.length);
-
-
-                }
-            }
-
-
-        }
-
-    }
-
-    private void handleSmallFile(Socket socket, String boundary, byte[] content) throws IOException {
-        byte[] boundaryPattern = boundary.getBytes(UTF_8);
-        int offset = 0;
-        String fileName;
-
-        while (offset < content.length) {
-            int index = lookup(content, boundaryPattern, offset);
-            if (index == -1) {
-                d("can't not find the boundary.");
-                return;
-            } else {
-                offset = index + boundary.length() + BYTES_LINE_FEED.length;
-            }
-            index = lookup(content, BYTES_LINE_FEED, offset);
-            if (index == -1) {
-                return;
-            } else {
-                // Content-Disposition
-                String contentDisposition = toString(Arrays.copyOfRange(content, offset, index));
-                offset = index + BYTES_LINE_FEED.length;
-                fileName = substringAfterLast(contentDisposition, "filename=");
-                fileName = trim(fileName, new char[]{'"'});
-
-                index = lookup(content, BYTES_DOUBLE_LINE_FEED, offset);
-                // File content start position
-                int start = index + BYTES_DOUBLE_LINE_FEED.length;
-                if (index == -1) {
-                    send(socket, STATUS_CODE_BAD_REQUEST, "Unable to determine the beginning of the file content");
-                    return;
-                }
-                index = lookup(content, boundaryPattern, start);
-                if (index == -1) {
-                    send(socket, STATUS_CODE_BAD_REQUEST, "Unable to determine the ending of the file content");
-                    return;
-
-                }
-                index -= BYTES_LINE_FEED.length;
-
-                writeBytes(fileName, content, start, index);
-                send(socket, STATUS_CODE_OK, fileName);
-                return;
-            }
-        }
-    }
-
     private int lookup(byte[] content, byte[] pattern, int startIndex) {
 
         int l1 = content.length;
@@ -343,20 +196,6 @@ public class SimpleServer {
         return -1;
     }
 
-    private int lookupStopPosition(byte[] content, int offset, byte[] boundrayPattern) {
-        int len = content.length;
-
-        for (int i = offset; i < len; i++) {
-            if (content[i] == '\r') {
-                if (len - i < boundrayPattern.length || rangeEquals(content, i, boundrayPattern)) {
-                    return i;
-                }
-
-            }
-        }
-
-        return -1;
-    }
 
     private Position nextLine(byte[] data, byte[] boundary, int offset) {
         int length = data.length;
@@ -400,31 +239,6 @@ public class SimpleServer {
         return null;
     }
 
-    private Map.Entry<Integer, String> parseFileName(byte[] content, byte[] boundaryPattern, int offset) {
-        int index = lookup(content, boundaryPattern, offset);
-        if (index == -1) {
-            return null;
-        } else {
-            offset = index + boundaryPattern.length + BYTES_LINE_FEED.length;
-        }
-
-        index = lookup(content, BYTES_LINE_FEED, offset);
-        if (index == -1) {
-            return null;
-        } else {
-            // Content-Disposition
-            String contentDisposition = toString(Arrays.copyOfRange(content, offset, index));
-            offset = index + BYTES_LINE_FEED.length;
-            String fileName = substringAfterLast(contentDisposition, "filename=");
-            fileName = trim(fileName, new char[]{'"'});
-
-            index = lookup(content, BYTES_DOUBLE_LINE_FEED, offset);
-            // File content start position
-            int start = index + BYTES_DOUBLE_LINE_FEED.length;
-
-            return new AbstractMap.SimpleEntry<>(start, fileName);
-        }
-    }
 
     private List<String> parseHeaders(byte[] buffer) {
         List<String> headers = new ArrayList<>();
@@ -700,17 +514,6 @@ public class SimpleServer {
 //        send(socket, STATUS_CODE_OK);
     }
 
-    private boolean byteArrayHasPrefix(byte[] prefix, byte[] byteArray, int offset) {
-        d(prefix.length + " " + byteArray.length + " " + offset);
-        if (prefix == null || byteArray == null || prefix.length > byteArray.length)
-            return false;
-        for (int i = 0; i < prefix.length; i++) {
-            if (prefix[i] != byteArray[i + offset])
-                return false;
-        }
-        return true;
-    }
-
     private void processVideoFile(Socket socket, InputStream is, String videoFileName, byte[] remainingBytes) {
         File videoFile = null;
         for (File file : mVideoFiles) {
@@ -834,15 +637,6 @@ public class SimpleServer {
 
     private void send(Socket socket, int statusCode) {
         send(socket, statusCode, null, null);
-    }
-
-    private void send(Socket socket, int statusCode, String message) {
-        try {
-            send(socket, statusCode, null, message.getBytes(UTF_8));
-        } catch (UnsupportedEncodingException e) {
-            e(e);
-            send(socket, 500);
-        }
     }
 
     private void send(Socket socket, int statusCode, File file) {
@@ -1000,12 +794,6 @@ public class SimpleServer {
         mThread.start();
     }
 
-    private void writeBytes(String fileName, byte[] buffer, int start, int length) throws IOException {
-        File file = new File("c:\\", fileName);
-        FileOutputStream os = new FileOutputStream(file);
-        os.write(buffer, start, length);
-        closeQuietly(os);
-    }
 
     private void writeHeaders(Socket socket, int statusCode, List<String> headers) throws IOException {
         byte[] header = responseHeader(statusCode, headers).getBytes(UTF_8);
@@ -1025,12 +813,6 @@ public class SimpleServer {
         }
     }
 
-    private OutputStream writePartBytes(String fileName, byte[] buffer, int start, int length) throws IOException {
-        File file = new File(mUploadDirectory, fileName);
-        OutputStream os = new BufferedOutputStream(new FileOutputStream(file));
-        os.write(buffer, start, length);
-        return os;
-    }
 
     static byte[] addAll(final byte[] array1, final byte... array2) {
         if (array1 == null) {
@@ -1573,16 +1355,6 @@ public class SimpleServer {
             }
         }
         return files;
-    }
-
-    static boolean rangeEquals(byte[] b1, int start, byte[] b2) {
-
-        for (int i = start; i < start + b2.length; i++) {
-            if (b1[start] != b2[2]) {
-                return false;
-            }
-        }
-        return true;
     }
 
     static String substringAfter(String s, String delimiter) {
