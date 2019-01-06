@@ -9,6 +9,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.UnsupportedEncodingException;
 import java.net.InetAddress;
@@ -98,7 +99,6 @@ public class SimpleServer {
 
 
     private boolean byteArrayHasPrefix(byte[] prefix, byte[] byteArray, int offset) {
-        d(prefix.length + " " + byteArray.length + " " + offset);
         if (prefix == null || byteArray == null || prefix.length > byteArray.length)
             return false;
         for (int i = 0; i < prefix.length; i++) {
@@ -378,7 +378,7 @@ public class SimpleServer {
 
         try {
             InputStream is = new BufferedInputStream(socket.getInputStream());
-            byte[][] status = sliceURL(socket, is);
+            byte[][] status = sliceURL(is);
             if (status == null || status.length < 1) {
                 send(socket, 404);
                 return;
@@ -424,6 +424,8 @@ public class SimpleServer {
             //parseHeader(socket);
         } catch (Exception e) {
             e(e);
+
+
         }
 
         closeQuietly(socket);
@@ -431,7 +433,7 @@ public class SimpleServer {
 
     private void processUploadFile(Socket socket, InputStream is, byte[] bytes) throws IOException {
         System.out.println("[processUploadFile] => ");
-        byte[][] header = sliceHeader(socket, is, bytes);
+        byte[][] header = sliceHeader(is, bytes);
         List<String> headers = parseHeaders(header[0]);
 
         String boundary = null;
@@ -440,16 +442,18 @@ public class SimpleServer {
             if (key.equalsIgnoreCase(HTTP_CONTENT_TYPE)) {
                 if (headers.get(i + 1).startsWith("multipart/form-data;")) {
                     boundary = substringAfter(headers.get(i + 1), "boundary=");
+                    System.out.println("boundary = " + boundary);
                 } else {
 
                     send(socket, STATUS_CODE_BAD_REQUEST);
                     return;
                 }
             } else if (key.equalsIgnoreCase(HTTP_CONTENT_LENGTH)) {
-                d(headers.get(i + 1));
+                System.out.println("Content length = " + headers.get(i + 1));
             }
         }
         if (boundary == null) {
+            System.out.println("boundary == null");
             send(socket, STATUS_CODE_BAD_REQUEST);
             return;
         } else {
@@ -457,6 +461,11 @@ public class SimpleServer {
             boundary = "--" + boundary;
         }
 
+        if (header[1] == null) {
+            System.out.println(toString(header[0]));
+            send(socket, STATUS_CODE_BAD_REQUEST);
+            return;
+        }
 
         // handleLargeFile(socket, is, boundary, header[1]);
 
@@ -468,15 +477,24 @@ public class SimpleServer {
         while (true) {
 
             if (exit) {
+                System.out.println("Exit while loop");
+
+                // do not forget invoke outputStream.flush
+                // otherwise maybe loss some data
+                os.flush();
                 closeQuietly(os);
                 send(socket, STATUS_CODE_OK);
                 return;
             }
             Position position = nextLine(data, boundaryBytes, offset);
             if (position == null) {
-                FormData formData = readData(is, data, offset);
-                data = formData.buffer;
+                os.write(data, offset, data.length - offset);
+                byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
+                int len = is.read(buffer, 0, DEFAULT_BUFFER_SIZE);
+
+                data = buffer;
                 offset = 0;
+
 
             } else if (position.isBoundaryLine) {
 
@@ -491,20 +509,22 @@ public class SimpleServer {
                         send(socket, STATUS_CODE_BAD_REQUEST);
                         return;
                     }
-                    d(formHeader.fileName + " " + formHeader.start);
+                    System.out.println("filename = " + formHeader.fileName);
                     offset = formHeader.start;
 
-                    os = new FileOutputStream(new File(mUploadDirectory, formHeader.fileName));
-
+                    os = new BufferedOutputStream(new FileOutputStream(new File(mUploadDirectory, formHeader.fileName)));
 
                 }
 
             } else {
                 if (data.length - position.position > boundaryBytes.length && byteArrayHasPrefix(boundaryBytes, data, position.position)) {
+                    System.out.println("Last line");
                     os.write(data, offset, position.position - offset - 2);
 
-                } else
+                } else {
                     os.write(data, offset, position.position - offset);
+
+                }
                 offset = position.position;
             }
         }
@@ -529,7 +549,7 @@ public class SimpleServer {
 
 
         try {
-            byte[][] header = sliceHeader(socket, is, remainingBytes);
+            byte[][] header = sliceHeader(is, remainingBytes);
             List<String> headers = parseHeaders(header[0]);
             long skip = 0L;
             for (int i = 0; i < headers.size(); i++) {
@@ -712,7 +732,7 @@ public class SimpleServer {
         mVideoFiles = files;
     }
 
-    private byte[][] sliceHeader(Socket socket, InputStream is, byte[] bytes) throws IOException {
+    private byte[][] sliceHeader(InputStream is, byte[] bytes) throws IOException {
         int bufferSize = 1024 * 8;
         int len;
         byte[] buffer = new byte[bufferSize];
@@ -742,7 +762,7 @@ public class SimpleServer {
         return null;
     }
 
-    private byte[][] sliceURL(Socket socket, InputStream is) throws IOException {
+    private byte[][] sliceURL(InputStream is) throws IOException {
 
 
         int bufferSize = 256;
@@ -840,6 +860,13 @@ public class SimpleServer {
 
     static void e(Exception e) {
         System.out.println("[E]: " + e);
+        StringBuilder sb = new StringBuilder();
+
+        StackTraceElement[] elements = e.getStackTrace();
+        for (StackTraceElement element : elements) {
+            sb.append(element.toString()).append('\n');
+        }
+        System.out.println(sb.toString());
     }
 
     static void e(String e) {
@@ -1367,12 +1394,6 @@ public class SimpleServer {
         int index = s.lastIndexOf(delimiter);
         if (index == -1) return null;
         else return s.substring(index);
-    }
-
-    static String substringAfterLast(String s, String delimiter) {
-        int index = s.lastIndexOf(delimiter);
-        if (index == -1) return null;
-        else return s.substring(index + delimiter.length());
     }
 
     static String substringBefore(String s, char delimiter) {
