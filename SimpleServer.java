@@ -479,7 +479,6 @@ public class SimpleServer {
 
                 // do not forget invoke outputStream.flush
                 // otherwise maybe loss some data
-                os.flush();
                 closeQuietly(os);
                 send(socket, STATUS_CODE_OK);
                 return;
@@ -487,6 +486,8 @@ public class SimpleServer {
             Position position = nextLine(data, boundaryBytes, offset);
             if (position == null) {
                 os.write(data, offset, data.length - offset);
+                os.flush();
+
                 byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
                 int len = is.read(buffer, 0, DEFAULT_BUFFER_SIZE);
 
