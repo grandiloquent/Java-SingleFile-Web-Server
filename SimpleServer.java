@@ -9,7 +9,6 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.UnsupportedEncodingException;
 import java.net.InetAddress;
@@ -19,7 +18,6 @@ import java.net.SocketTimeoutException;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.text.SimpleDateFormat;
-import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -27,7 +25,7 @@ import java.util.Hashtable;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -36,23 +34,23 @@ public class SimpleServer {
 
     private static final byte[] BYTES_DOUBLE_LINE_FEED = new byte[]{'\r', '\n', '\r', '\n'};
     private static final byte[] BYTES_LINE_FEED = new byte[]{'\r', '\n'};
-    static final String DATE_FORMAT_GMT = " EEE, dd MMM yyyy hh:mm:ss 'GMT'";
-    static final int DEFAULT_BUFFER_SIZE = 8 * 1024;
-    static final String HTTP_CACHE_CONTROL = "Cache-Control";
+    private static final String DATE_FORMAT_GMT = " EEE, dd MMM yyyy hh:mm:ss 'GMT'";
+    private static final int DEFAULT_BUFFER_SIZE = 8 * 1024;
+    private static final String HTTP_CACHE_CONTROL = "Cache-Control";
     static final String HTTP_CONTENT_DISPOSITION = "Content-Disposition";
-    static final String HTTP_CONTENT_TYPE = "Content-Type";
-    static final String HTTP_DATE = "Date";
-    static final String HTTP_RANGE = "Range";
-    static final int MILLIS_PER_SECOND = 1000;
-    static final int MILLIS_PER_MINUTE = MILLIS_PER_SECOND * 60; //     60,000
-    static final int MILLIS_PER_HOUR = MILLIS_PER_MINUTE * 60;   //  3,600,000
+    private static final String HTTP_CONTENT_TYPE = "Content-Type";
+    private static final String HTTP_DATE = "Date";
+    private static final String HTTP_RANGE = "Range";
+    private static final int MILLIS_PER_SECOND = 1000;
+    private static final int MILLIS_PER_MINUTE = MILLIS_PER_SECOND * 60; //     60,000
+    private static final int MILLIS_PER_HOUR = MILLIS_PER_MINUTE * 60;   //  3,600,000
     static final int MILLIS_PER_DAY = MILLIS_PER_HOUR * 24;      // 86,400,000
-    static final int STATUS_CODE_BAD_REQUEST = 400;
-    static final int STATUS_CODE_INTERNAL_SERVER_ERROR = 500;
-    static final int STATUS_CODE_NOT_FOUND = 404;
-    static final int STATUS_CODE_OK = 200;
-    static final int STATUS_CODE_PARTIAL_CONTENT = 206;
-    static final String UTF_8 = "UTF-8";
+    private static final int STATUS_CODE_BAD_REQUEST = 400;
+    private static final int STATUS_CODE_INTERNAL_SERVER_ERROR = 500;
+    private static final int STATUS_CODE_NOT_FOUND = 404;
+    private static final int STATUS_CODE_OK = 200;
+    private static final int STATUS_CODE_PARTIAL_CONTENT = 206;
+    private static final String UTF_8 = "UTF-8";
     private static final byte[] mBytesDropZone = new byte[]{60, 100, 105, 118, 32, 105, 100, 61, 34, 100, 114, 111, 112, 122, 111, 110, 101, 34, 62, 60, 102, 111, 114, 109, 32, 99, 108, 97, 115, 115, 61, 34, 100, 114, 111, 112, 122, 111, 110, 101, 34, 32, 97, 99, 116, 105, 111, 110, 61, 34, 47, 117, 112, 108, 111, 97, 100, 34, 62, 60, 47, 102, 111, 114, 109, 62, 60, 47, 100, 105, 118, 62};
     private static final byte[][] mBytesIndex = new byte[][]{
 /* 0  */new byte[]{60, 33, 68, 79, 67, 84, 89, 80, 69, 32, 104, 116, 109, 108, 62, 60, 104, 116, 109, 108, 62, 60, 104, 101, 97, 100, 62, 60, 109, 101, 116, 97, 32, 104, 116, 116, 112, 45, 101, 113, 117, 105, 118, 61, 34, 88, 45, 85, 65, 45, 67, 111, 109, 112, 97, 116, 105, 98, 108, 101, 34, 32, 99, 111, 110, 116, 101, 110, 116, 61, 34, 73, 69, 61, 101, 100, 103, 101, 34, 47, 62, 60, 109, 101, 116, 97, 32, 99, 104, 97, 114, 115, 101, 116, 61, 34, 117, 116, 102, 45, 56, 34, 47, 62, 60, 116, 105, 116, 108, 101, 62, 60, 47, 116, 105, 116, 108, 101, 62, 60, 109, 101, 116, 97, 32, 110, 97, 109, 101, 61, 34, 100, 101, 115, 99, 114, 105, 112, 116, 105, 111, 110, 34, 32, 99, 111, 110, 116, 101, 110, 116, 61, 34, 34, 47, 62, 60, 109, 101, 116, 97, 32, 110, 97, 109, 101, 61, 34, 97, 117, 116, 104, 111, 114, 34, 32, 99, 111, 110, 116, 101, 110, 116, 61, 34, 34, 47, 62, 60, 109, 101, 116, 97, 32, 110, 97, 109, 101, 61, 34, 118, 105, 101, 119, 112, 111, 114, 116, 34, 32, 99, 111, 110, 116, 101, 110, 116, 61, 34, 119, 105, 100, 116, 104, 61, 100, 101, 118, 105, 99, 101, 45, 119, 105, 100, 116, 104, 44, 32, 105, 110, 105, 116, 105, 97, 108, 45, 115, 99, 97, 108, 101, 61, 49, 34, 47, 62, 60, 108, 105, 110, 107, 32, 114, 101, 108, 61, 34, 115, 116, 121, 108, 101, 115, 104, 101, 101, 116, 34, 32, 104, 114, 101, 102, 61, 34, 100, 114, 111, 112, 122, 111, 110, 101, 46, 109, 105, 110, 46, 99, 115, 115, 34, 47, 62, 60, 108, 105, 110, 107, 32, 114, 101, 108, 61, 34, 115, 116, 121, 108, 101, 115, 104, 101, 101, 116, 34, 32, 104, 114, 101, 102, 61, 34, 109, 97, 105, 110, 46, 109, 105, 110, 46, 99, 115, 115, 34, 47, 62, 60, 33, 45, 45, 91, 105, 102, 32, 108, 116, 32, 73, 69, 32, 57, 93, 62, 60, 115, 99, 114, 105, 112, 116, 32, 115, 114, 99, 61, 34, 47, 47, 99, 100, 110, 106, 115, 46, 99, 108, 111, 117, 100, 102, 108, 97, 114, 101, 46, 99, 111, 109, 47, 97, 106, 97, 120, 47, 108, 105, 98, 115, 47, 104, 116, 109, 108, 53, 115, 104, 105, 118, 47, 51, 46, 55, 46, 50, 47, 104, 116, 109, 108, 53, 115, 104, 105, 118, 46, 109, 105, 110, 46, 106, 115, 34, 62, 60, 47, 115, 99, 114, 105, 112, 116, 62, 60, 115, 99, 114, 105, 112, 116, 32, 115, 114, 99, 61, 34, 47, 47, 99, 100, 110, 106, 115, 46, 99, 108, 111, 117, 100, 102, 108, 97, 114, 101, 46, 99, 111, 109, 47, 97, 106, 97, 120, 47, 108, 105, 98, 115, 47, 114, 101, 115, 112, 111, 110, 100, 46, 106, 115, 47, 49, 46, 52, 46, 50, 47, 114, 101, 115, 112, 111, 110, 100, 46, 109, 105, 110, 46, 106, 115, 34, 62, 60, 47, 115, 99, 114, 105, 112, 116, 62, 60, 33, 91, 101, 110, 100, 105, 102, 93, 45, 45, 62, 60, 115, 99, 114, 105, 112, 116, 32, 115, 114, 99, 61, 34, 100, 114, 111, 112, 122, 111, 110, 101, 46, 109, 105, 110, 46, 106, 115, 34, 62, 60, 47, 115, 99, 114, 105, 112, 116, 62, 60, 98, 111, 100, 121, 62, 60, 100, 105, 118, 32, 99, 108, 97, 115, 115, 61, 34, 99, 111, 110, 116, 97, 105, 110, 101, 114, 34, 62},
@@ -62,9 +60,9 @@ public class SimpleServer {
             /* 0 src */new byte[]{60, 100, 105, 118, 32, 105, 100, 61, 34, 112, 108, 97, 121, 101, 114, 34, 32, 99, 108, 97, 115, 115, 61, 34, 112, 108, 97, 121, 101, 114, 45, 97, 112, 105, 32, 112, 108, 97, 121, 101, 114, 45, 115, 105, 122, 101, 34, 62, 60, 100, 105, 118, 32, 99, 108, 97, 115, 115, 61, 34, 104, 116, 109, 108, 53, 45, 118, 105, 100, 101, 111, 45, 99, 111, 110, 116, 97, 105, 110, 101, 114, 34, 62, 60, 118, 105, 100, 101, 111, 32, 99, 108, 97, 115, 115, 61, 34, 104, 116, 109, 108, 53, 45, 118, 105, 100, 101, 111, 45, 112, 108, 97, 121, 101, 114, 34, 32, 99, 111, 110, 116, 114, 111, 108, 115, 32, 97, 117, 116, 111, 112, 108, 97, 121, 62, 60, 115, 111, 117, 114, 99, 101, 32, 115, 114, 99, 61, 34},
             /* 1  */new byte[]{34, 32, 116, 121, 112, 101, 61, 34, 118, 105, 100, 101, 111, 47, 109, 112, 52, 34, 47, 62, 60, 47, 118, 105, 100, 101, 111, 62, 60, 47, 100, 105, 118, 62, 60, 47, 100, 105, 118, 62},
     };
-    static final String[] mVideoExtensions = new String[]{
+    private static final String[] mVideoExtensions = new String[]{
             ".mp4", ".webm"};
-    final String HTTP_CONTENT_LENGTH = "Content-Length";
+    private final String HTTP_CONTENT_LENGTH = "Content-Length";
     private final ExecutorService mExecutorService;
     private final Hashtable<String, String> mMimeTypes = getMimeTypeTable();
     private final ServerSocket mServerSocket;
@@ -174,7 +172,7 @@ public class SimpleServer {
         return formHeader;
     }
 
-    public String getURL() {
+    String getURL() {
         return mURL;
     }
 
@@ -405,7 +403,7 @@ public class SimpleServer {
                 } else {
                     File file = new File(mStaticDirectory, u[1]);
                     if (file.isFile()) {
-                        send(socket, 200, file);
+                        send(socket, file);
                     } else {
                         send(socket, 404);
                     }
@@ -520,10 +518,11 @@ public class SimpleServer {
                 if (data.length - position.position > boundaryBytes.length && byteArrayHasPrefix(boundaryBytes, data, position.position)) {
                     System.out.println("Last line");
                     os.write(data, offset, position.position - offset - 2);
+                    os.flush();
 
                 } else {
                     os.write(data, offset, position.position - offset);
-
+                    os.flush();
                 }
                 offset = position.position;
             }
@@ -570,7 +569,7 @@ public class SimpleServer {
 
             InputStream fileInputStream = new FileInputStream(videoFile);
             List<String> responseHeaders = generateGenericHeader(
-                    getMimeTypeTable().get(getExtension(videoFileName)),
+                    getMimeTypeTable().get(Objects.requireNonNull(getExtension(videoFileName))),
                     "public, max-age=31536000");
 
             responseHeaders.add(HTTP_CONTENT_LENGTH);
@@ -659,17 +658,17 @@ public class SimpleServer {
         send(socket, statusCode, null, null);
     }
 
-    private void send(Socket socket, int statusCode, File file) {
+    private void send(Socket socket, File file) {
         try {
             OutputStream os = socket.getOutputStream();
             List<String> headers = new ArrayList<>();
 
-            String extension = substringAfterLast(file.getName(), '.').toLowerCase();
+            String extension = substringAfterLast(file.getName(), '.');
             headers.add(HTTP_CONTENT_TYPE);
             headers.add(mMimeTypes.get(extension));//  "; charset=UTF-8"
 
             if (extension != null) {
-                switch (extension) {
+                switch (extension.toLowerCase()) {
                     case ".html":
 
                         headers.add(HTTP_CACHE_CONTROL);
@@ -727,9 +726,8 @@ public class SimpleServer {
     }
 
     private void setupVideoFiles() {
-        List<File> files = listFilesRecursivelyInDirectories(mVideoDirectory,
+        mVideoFiles = listFilesRecursivelyInDirectories(mVideoDirectory,
                 mVideoExtensions);
-        mVideoFiles = files;
     }
 
     private byte[][] sliceHeader(InputStream is, byte[] bytes) throws IOException {
@@ -752,12 +750,11 @@ public class SimpleServer {
             }
 
             System.out.println("[sliceHeader] => " + len + " " + bufferSize);
-            byte[][] result = new byte[][]{
+            return new byte[][]{
                     buf1,
                     buf2,
                     len < bufferSize ? new byte[]{0} : new byte[]{1}
             };
-            return result;
         }
         return null;
     }
@@ -781,11 +778,10 @@ public class SimpleServer {
             if (len - index > 2) {
                 buf2 = Arrays.copyOfRange(buffer, index + 2, len);
             }
-            byte[][] result = new byte[][]{
+            return new byte[][]{
                     buf1,
                     buf2
             };
-            return result;
         }
         return null;
     }
@@ -834,7 +830,7 @@ public class SimpleServer {
     }
 
 
-    static byte[] addAll(final byte[] array1, final byte... array2) {
+    private static byte[] addAll(final byte[] array1, final byte... array2) {
         if (array1 == null) {
             return array2.clone();
         } else if (array2 == null) {
@@ -846,7 +842,7 @@ public class SimpleServer {
         return joinedArray;
     }
 
-    static void closeQuietly(Closeable closeable) {
+    private static void closeQuietly(Closeable closeable) {
         try {
             closeable.close();
         } catch (Exception e) {
@@ -854,11 +850,11 @@ public class SimpleServer {
         }
     }
 
-    static void d(String message) {
+    private static void d(String message) {
         System.out.println("[D]: " + message);
     }
 
-    static void e(Exception e) {
+    private static void e(Exception e) {
         System.out.println("[E]: " + e);
         StringBuilder sb = new StringBuilder();
 
@@ -869,11 +865,11 @@ public class SimpleServer {
         System.out.println(sb.toString());
     }
 
-    static void e(String e) {
+    private static void e(String e) {
         System.out.println("[E]: " + e);
     }
 
-    static String getDefaultReason(int statusCode) {
+    private static String getDefaultReason(int statusCode) {
         switch (statusCode) {
             case 100:
                 return "Continue";
@@ -975,7 +971,7 @@ public class SimpleServer {
         }
     }
 
-    static String getExtension(String fileName) {
+    private static String getExtension(String fileName) {
         int index = fileName.lastIndexOf('.');
         if (index != -1)
             return fileName.substring(index);
@@ -983,7 +979,7 @@ public class SimpleServer {
             return null;
     }
 
-    static Hashtable<String, String> getMimeTypeTable() {
+    private static Hashtable<String, String> getMimeTypeTable() {
         Hashtable<String, String> hashtable = new Hashtable<>();
 
         hashtable.put(".323", "text/h323");
@@ -1335,7 +1331,7 @@ public class SimpleServer {
         return hashtable;
     }
 
-    static boolean isVideoFileName(String name) {
+    private static boolean isVideoFileName(String name) {
         int index = name.lastIndexOf('.');
         if (index == -1) return false;
         String extension = name.substring(index);
@@ -1347,7 +1343,7 @@ public class SimpleServer {
         return false;
     }
 
-    static List<File> listFilesRecursively(String dir, String[] extensions) {
+    private static List<File> listFilesRecursively(String dir, String[] extensions) {
         List<File> allFiles = new ArrayList<File>();
         Queue<File> dirs = new LinkedList<File>();
         dirs.add(new File(dir));
@@ -1372,7 +1368,7 @@ public class SimpleServer {
         return allFiles;
     }
 
-    static List<File> listFilesRecursivelyInDirectories(String[] directories, String[] extensions) {
+    private static List<File> listFilesRecursivelyInDirectories(String[] directories, String[] extensions) {
         List<File> files = null;
         for (String dir : directories) {
             if (files == null) {
@@ -1384,25 +1380,25 @@ public class SimpleServer {
         return files;
     }
 
-    static String substringAfter(String s, String delimiter) {
+    private static String substringAfter(String s, String delimiter) {
         int index = s.indexOf(delimiter);
         if (index == -1) return null;
         else return s.substring(index + delimiter.length());
     }
 
-    static String substringAfterLast(String s, char delimiter) {
+    private static String substringAfterLast(String s, char delimiter) {
         int index = s.lastIndexOf(delimiter);
         if (index == -1) return null;
         else return s.substring(index);
     }
 
-    static String substringBefore(String s, char delimiter) {
+    private static String substringBefore(String s, char delimiter) {
         int index = s.indexOf(delimiter);
         if (index == -1) return null;
         else return s.substring(0, index);
     }
 
-    static String toString(byte[] buffer) {
+    private static String toString(byte[] buffer) {
         try {
             return new String(buffer, UTF_8);
         } catch (UnsupportedEncodingException e) {
@@ -1411,7 +1407,7 @@ public class SimpleServer {
         return null;
     }
 
-    static String trim(String s, char[] chars) {
+    private static String trim(String s, char[] chars) {
         int startIndex = 0;
         int endIndex = s.length() - 1;
         boolean startFound = false;
@@ -1442,20 +1438,20 @@ public class SimpleServer {
         return s.substring(startIndex, endIndex + 1);
     }
 
-    public static class Builder {
+    static class Builder {
         private final String mHost;
         private final int mPort;
         private String mStaticDirectory;
         private String mUploadDirectory;
         private String[] mVideoDirectory;
 
-        public Builder(String host, int port) {
+        Builder(String host, int port) {
 
             mHost = host;
             mPort = port;
         }
 
-        public SimpleServer build() {
+        SimpleServer build() {
             try {
                 return new SimpleServer(this);
             } catch (IOException e) {
@@ -1463,35 +1459,35 @@ public class SimpleServer {
             }
         }
 
-        public Builder setStaticDirectory(String staticDirectory) {
+        Builder setStaticDirectory(String staticDirectory) {
             mStaticDirectory = staticDirectory;
             return this;
         }
 
-        public Builder setUploadDirectory(String uploadDirectory) {
+        Builder setUploadDirectory(String uploadDirectory) {
             mUploadDirectory = uploadDirectory;
             return this;
         }
 
-        public Builder setVideoDirectory(String[] videoDirectory) {
+        Builder setVideoDirectory(String[] videoDirectory) {
             mVideoDirectory = videoDirectory;
             return this;
         }
     }
 
     private static class FormHeader {
-        public String fileName;
-        public int start;
+        String fileName;
+        int start;
     }
 
     private static class Position {
-        public boolean isBoundaryLine;
-        public boolean isLastLine;
-        public int position;
+        boolean isBoundaryLine;
+        boolean isLastLine;
+        int position;
     }
 
     private static class FormData {
-        public byte[] buffer;
-        public boolean hasNext;
+        byte[] buffer;
+        boolean hasNext;
     }
 }
